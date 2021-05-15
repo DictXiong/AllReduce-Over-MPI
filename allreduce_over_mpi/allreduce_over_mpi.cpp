@@ -24,20 +24,21 @@ public:
     }
 };
 
-class Send_Ops
+class Operations
 {
+protected:
     std::vector<size_t> stages;
     size_t total_peers, num_peer;
 public:
-    std::vector<std::vector<Operation>> send_ops;
+    std::vector<std::vector<Operation>> ops;
     /**
-     * Send_Ops 类的构造函数
+     * Operations 类的构造函数
      * 
      * @param _total_peers 参与计算的总节点数
      * @param _num_peer 当前节点的编号
-     * @param _stages 一个向量, 记录了 AllReduce 树每一层的宽度. 注意积应当等于 {@code _total_peers}.
+     * @param _stages 一个向量, 记录了 AllReduce 树自下而上每一层的宽度. 注意积应当等于 {@code _total_peers}.
      */ 
-    Send_Ops(size_t _total_peers, size_t _num_peer, std::vector<size_t> _stages): total_peers(_total_peers), num_peer(_num_peer), stages(_stages)
+    Operations(size_t _total_peers, size_t _num_peer, std::vector<size_t> _stages): total_peers(_total_peers), num_peer(_num_peer), stages(_stages)
     {
         CHECK_GT(_total_peers, 0);
         CHECK_GE(_num_peer, 0);
@@ -50,34 +51,15 @@ public:
         }
         CHECK_EQ(pi, _total_peers);
     }
-    /**
-     * 生成逻辑拓扑
-     */ 
-    void generate_send_ops()
-    {
-        // 当前组内成员的编号的间距
-        size_t gap = 1;
-        for (auto i:stages)
-        {
-            std::vector<Operation> ops;
-            // 当前组内编号最小的成员
-            size_t left_peer = num_peer / (gap * i) * (gap * i) + num_peer % gap;
-            for (size_t j = 0; j < i; j++)
-            {
-                ops.emplace_back(left_peer, total_peers, gap * i);
-                left_peer += gap;
-            }
-            send_ops.push_back(ops);
-            gap *= i;
-        }
-    }
+    // 生成拓扑, 要求子类实现
+    virtual void generate_ops() = 0;
     // 打印拓扑
-    void print_send_ops()const
+    virtual void print_ops()const
     {
-        std::cout << "Send Operations of node " << num_peer << " in total " << total_peers << " peers: " << std::endl;
-        for (const auto &i:send_ops)
+        std::cout << typeid(*this).name() << " of node " << num_peer << " in total " << total_peers << " peers: " << std::endl;
+        for (const auto &i:ops)
         {
-            if (&i != &*(send_ops.end() - 1))
+            if (&i != &*(ops.end() - 1))
             {
                 std::cout << "┝ stage";
             }
@@ -87,7 +69,7 @@ public:
             }
             for (const auto &j:i)
             {
-                std::cout<< " | to " << j.peer<<": ";
+                std::cout<< " | node " << j.peer<<": ";
                 for (auto k:j.blocks)
                 {
                     std::cout<<k<<",";
@@ -98,14 +80,66 @@ public:
     }
 };
 
+class Send_Ops: public Operations
+{
+public:
+    using Operations::Operations;
+    // 生成逻辑拓扑
+    virtual void generate_ops()
+    {
+        // 当前组内成员的编号的间距
+        size_t gap = 1;
+        for (auto i:stages)
+        {
+            std::vector<Operation> stage_ops;
+            // 当前组内编号最小的成员
+            size_t left_peer = num_peer / (gap * i) * (gap * i) + num_peer % gap;
+            for (size_t j = 0; j < i; j++)
+            {
+                stage_ops.emplace_back(left_peer, total_peers, gap * i);
+                left_peer += gap;
+            }
+            ops.push_back(stage_ops);
+            gap *= i;
+        }
+    }
+};
+
+class Recv_Ops: public Operations
+{
+public:
+    using Operations::Operations;
+    // 生成逻辑拓扑
+    virtual void generate_ops()
+    {
+        // 当前组内成员的编号的间距
+        size_t gap = 1;
+        for (auto i:stages)
+        {
+            std::vector<Operation> stage_ops;
+            Operation op_template(num_peer, total_peers, gap * i);
+            // 当前组内编号最小的成员
+            size_t left_peer = num_peer / (gap * i) * (gap * i) + num_peer % gap;
+            for (size_t j = 0; j < i; j++)
+            {
+                op_template.peer = left_peer;
+                stage_ops.emplace_back(op_template);
+                left_peer += gap;
+            }
+            ops.push_back(stage_ops);
+            gap *= i;
+        }
+    }
+};
+
 int main(int argc, char **argv)
 {
     FLAGS_colorlogtostderr = true;
     FLAGS_logtostderr = true;
     google::InitGoogleLogging(argv[0]);
-    LOG(INFO) << "glog initialized.";
+    //LOG(INFO) << "glog initialized.";
     Send_Ops test(12, 3, {2,3,2});
-    test.generate_send_ops();
-    test.print_send_ops();
+    test.generate_ops();
+    test.print_ops();
     google::ShutdownGoogleLogging();
 }
