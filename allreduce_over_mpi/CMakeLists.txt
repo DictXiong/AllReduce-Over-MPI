@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(aompiproj)
-SET(CMAKE_C_COMPILER "gcc")
-SET(CMAKE_CXX_COMPILER "g++")
+set(CMAKE_C_COMPILER "gcc")
+set(CMAKE_CXX_COMPILER "g++")
+set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -Wreorder -fPIC -fopenmp -mavx2")
 
 find_package(glog REQUIRED)
 
