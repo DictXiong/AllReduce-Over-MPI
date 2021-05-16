@@ -8,6 +8,7 @@ find_package(glog REQUIRED)
 find_package(MPI REQUIRED)
 
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
+message("${MPI_INCLUDE_PATH}")
 
 add_executable(allreduce_over_mpi allreduce_over_mpi.cpp)
 target_link_libraries(allreduce_over_mpi ${MPI_CXX_LIBRARIES} glog pthread)

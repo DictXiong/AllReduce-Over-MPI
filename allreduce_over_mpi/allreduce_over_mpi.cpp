@@ -8,9 +8,10 @@
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
 typedef float DataType;
+const int INF = 0x3F3F3F3F;
 
 // 全局变量, 标注当前节点的编号, 和总结点数量
-int num_peer, total_peers; 
+size_t num_peer, total_peers; 
 
 class Operation
 {
@@ -18,7 +19,7 @@ public:
     size_t peer;
     std::vector<size_t> blocks;
     /**
-     * Operation 类构造函数.
+     * Operation 类构造函数. 用于 Tree AllReduce.
      *  
      * @param _peer 接受/发送操作的对象
      * @param _total_peers 参与计算的总节点数
@@ -31,6 +32,16 @@ public:
         {
             blocks.push_back(i);
         }
+    }
+    /**
+     * Operation 类构造函数.
+     *  
+     * @param _peer 接受/发送操作的对象
+     * @param _block 接收/发送的数据块的编号
+     */
+    Operation(size_t _peer, size_t _block): peer(_peer)
+    {
+        blocks.push_back(_block);
     }
 };
 
@@ -343,7 +354,7 @@ void reduce_sum(DataType **src, int num_blocks, size_t num_elements)
         break;
     }
     default:
-        std::cerr << "Unknown num_blocks: " << num_blocks << std::endl;
+        LOG(FATAL) << "Unknown num_blocks: " << num_blocks;
         break;
     }
 }
@@ -372,11 +383,14 @@ void handle_send(std::vector<Operation> *ops, DataType *data, size_t len)
             for (const auto &j : i.blocks)
             {
                 start = len / total_peers * j;
+                LOG_IF(INFO, num_peer == 0) << "##0 send " << j << " which is " << start << "+" << count << " to " << i.peer ;
                 MPI_Isend(data + start, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
             }
         }
     }
+    LOG_IF(INFO, num_peer == 0) << "START OF SEND";
     MPI_Waitall(request_index, request, status);
+    LOG_IF(INFO, num_peer == 0) << "END OF SEND";
 }
 
 void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
@@ -387,7 +401,7 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
     DataType *buffer = new DataType[len]; // 创建 buffer
     size_t buffer_index = 0;
     const size_t peer_gap = (*ops)[0].blocks.size(); // buffer 中来自同一节点的数据块连续存放, 这是不同节点的相同数据块之间的间距
-    const size_t count_peers = ops->size() - 1; // 要与多少人进行通信
+    const size_t count_peers = (ops->size() == 1 ? 1 : ops->size() - 1); // 要与多少人进行通信
     const size_t comm_size = count_peers * peer_gap; // 总共要进行的通信的次数
 
     // 用于 MPI_Waitall()
@@ -406,9 +420,9 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
                 MPI_Irecv(buffer + buffer_index, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
                 buffer_index += count;
             }
-        }
+        } 
     }
-
+    
     MPI_Waitall(request_index, request, status);
 
     // 通信结束, 开始加和
@@ -438,7 +452,7 @@ void handle_recv_broadcast(std::vector<Operation> *ops, DataType *data, size_t l
 
     size_t start;
 
-    const size_t count_peers = ops->size() - 1; // 要与多少人进行通信
+    const size_t count_peers = (ops->size() == 1 ? 1 : ops->size() - 1); // 要与多少人进行通信
     const size_t peer_gap = (*ops)[0].blocks.size(); // 与每人通信的次数
     const size_t comm_size = count_peers * peer_gap; // 总共要进行的通信的次数
 
@@ -464,9 +478,10 @@ void handle_recv_broadcast(std::vector<Operation> *ops, DataType *data, size_t l
     MPI_Waitall(request_index, request, status);
 }
 
-void all_reduce(DataType *data, size_t len, std::vector<size_t> stages)
+void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
 {
     CHECK_NOTNULL(data);
+    CHECK_EQ(0, len % total_peers) << "data length should be an integral multiple of the total bumber of nodes";
 
     MPI_Barrier(MPI_COMM_WORLD);
     LOG_IF(WARNING, num_peer == 0) << "gathering start";
@@ -494,23 +509,72 @@ void all_reduce(DataType *data, size_t len, std::vector<size_t> stages)
     LOG_IF(WARNING, num_peer == 0) << "broadcast done";
 }
 
+void ring_allreduce(DataType *data, size_t len)
+{
+    CHECK_NOTNULL(data);
+    MPI_Barrier(MPI_COMM_WORLD);
+    const size_t left = (num_peer == 0 ? total_peers - 1 : num_peer - 1);
+    const size_t right = (num_peer == total_peers - 1 ? 0 : num_peer + 1);
+    size_t block_send = num_peer;
+    size_t block_recv = left;
+    
+    LOG_IF(WARNING, num_peer == 0) << "gathering start";
+    for (size_t i = 0; i != total_peers - 1; i++)
+    {
+        std::vector<Operation> send_ops = {Operation(right, block_send)};
+        std::vector<Operation> recv_ops = {Operation(left, block_recv)};
+        std::thread send_thread(handle_send, &send_ops, data, len);
+        std::thread recv_thread(handle_recv_gather, &recv_ops, data, len);
+        send_thread.join();
+        recv_thread.join();
+        MPI_Barrier(MPI_COMM_WORLD);
+        block_send = (block_send == 0 ? total_peers - 1 : block_send - 1);
+        block_recv = (block_recv == 0 ? total_peers - 1 : block_recv - 1);
+    }
+    LOG_IF(WARNING, num_peer == 0) << "gathering done";
+    for (size_t i = 0; i != total_peers - 1; i++)
+    {
+        std::vector<Operation> send_ops = {Operation(right, block_send)};
+        std::vector<Operation> recv_ops = {Operation(left, block_recv)};
+        std::thread send_thread(handle_send, &send_ops, data, len);
+        std::thread recv_thread(handle_recv_broadcast, &recv_ops, data, len);
+        send_thread.join();
+        recv_thread.join();
+        MPI_Barrier(MPI_COMM_WORLD);
+        block_send = (block_send == 0 ? total_peers - 1 : block_send - 1);
+        block_recv = (block_recv == 0 ? total_peers - 1 : block_recv - 1);
+    }
+    LOG_IF(WARNING, num_peer == 0) << "broadcast done";
+}
+
 int main(int argc, char **argv)
 {
+    int tmp;
     FLAGS_colorlogtostderr = true;
     FLAGS_logtostderr = true;
     google::InitGoogleLogging(argv[0]);
-    LOG(INFO) << "glog initialized.";
     MPI_Init(&argc, &argv);
-    MPI_Comm_size(MPI_COMM_WORLD, &total_peers);
-    MPI_Comm_rank(MPI_COMM_WORLD, &num_peer);
+    MPI_Comm_size(MPI_COMM_WORLD, &tmp);
+    total_peers = tmp;
+    MPI_Comm_rank(MPI_COMM_WORLD, &tmp);
+    num_peer = tmp;
+    LOG_IF(INFO, num_peer == 0) << "glog initialized.";
     LOG(INFO) << "total " << total_peers << " and here's " << num_peer;
-    CHECK_EQ(total_peers, 6);
-    if (num_peer == 0) google::InstallFailureSignalHandler();
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    float data[] = {1,2,3,4,5,6,7,8,9,10,11,12};
+   //if (num_peer == 0) 
+        //google::InstallFailureSignalHandler();
     
-    all_reduce(data, 12, {2,3});
+    size_t data_len = 12;
+    DataType *data = new DataType[data_len];
+    char *mpi_buffer = new char[data_len * 10];
+    MPI_Buffer_attach(mpi_buffer, data_len * 10);
+
+    for (size_t i = 0; i != data_len; i++)
+    {
+        data[i] = i / 10.0;
+    }
+    
+    //tree_allreduce(data, data_len, {2,3});
+    ring_allreduce(data, data_len);
 
     std::cout << "summary " << num_peer << ": ";
     for (int i = 0; i != 12; i++) std::cout << data[i] << " ";
