@@ -1,6 +1,16 @@
 #include<iostream>
 #include<vector>
+#include<thread>
+#include<mpi.h>
 #include "glog/logging.h"
+
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+
+typedef float DataType;
+
+// 全局变量, 标注当前节点的编号, 和总结点数量
+int num_peer, total_peers; 
 
 class Operation
 {
@@ -26,7 +36,7 @@ public:
 
 class Operations
 {
-protected:
+public:
     std::vector<size_t> stages;
     size_t total_peers, num_peer;
 public:
@@ -132,31 +142,32 @@ public:
     }
 };
 
-template<typename T>
-void reduce_sum(T **src, int num_blocks, size_t num_elements)
+const size_t MAX_NUM_BLOCKS = 20;
+void reduce_sum(DataType **src, int num_blocks, size_t num_elements)
 {
+    CHECK_LE(num_blocks, MAX_NUM_BLOCKS);
 #define PARALLEL_THREAD 14
-    T *dst = src[0];
-    T *src0 = src[0];
-    T *src1 = src[1];
-    T *src2 = src[2];
-    T *src3 = src[3];
-    T *src4 = src[4];
-    T *src5 = src[5];
-    T *src6 = src[6];
-    T *src7 = src[7];
-    T *src8 = src[8];
-    T *src9 = src[9];
-    T *src10 = src[10];
-    T *src11 = src[11];
-    T *src12 = src[12];
-    T *src13 = src[13];
-    T *src14 = src[14];
-    T *src15 = src[15];
-    T *src16 = src[16];
-    T *src17 = src[17];
-    T *src18 = src[18];
-    T *src19 = src[19];
+    DataType *dst = src[0];
+    DataType *src0 = src[0];
+    DataType *src1 = src[1];
+    DataType *src2 = src[2];
+    DataType *src3 = src[3];
+    DataType *src4 = src[4];
+    DataType *src5 = src[5];
+    DataType *src6 = src[6];
+    DataType *src7 = src[7];
+    DataType *src8 = src[8];
+    DataType *src9 = src[9];
+    DataType *src10 = src[10];
+    DataType *src11 = src[11];
+    DataType *src12 = src[12];
+    DataType *src13 = src[13];
+    DataType *src14 = src[14];
+    DataType *src15 = src[15];
+    DataType *src16 = src[16];
+    DataType *src17 = src[17];
+    DataType *src18 = src[18];
+    DataType *src19 = src[19];
 
     switch (num_blocks)
     {
@@ -337,14 +348,174 @@ void reduce_sum(T **src, int num_blocks, size_t num_elements)
     }
 }
 
+void handle_send(std::vector<Operation> *ops, DataType *data, size_t len)
+{
+    CHECK_NOTNULL(ops);
+    CHECK_NOTNULL(data);
+
+    size_t start;
+
+    // 总共要进行的通信的次数
+    const size_t comm_size = ops->size() * (*ops)[0].blocks.size();
+
+    // 用于 MPI_Waitall()
+    MPI_Request *request = new MPI_Request[comm_size];
+    size_t request_index = 0;
+    MPI_Status *status = new MPI_Status[comm_size];
+
+    int count = len / total_peers;
+
+    for (const auto &i : *ops)
+    {
+        if (LIKELY(num_peer != i.peer))
+        {
+            for (const auto &j : i.blocks)
+            {
+                start = len / total_peers * j;
+                MPI_Isend(data + start, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
+            }
+        }
+    }
+    MPI_Waitall(request_index, request, status);
+}
+
+void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
+{
+    CHECK_NOTNULL(ops);
+    CHECK_NOTNULL(data);
+
+    DataType *buffer = new DataType[len]; // 创建 buffer
+    size_t buffer_index = 0;
+    const size_t peer_gap = (*ops)[0].blocks.size(); // buffer 中来自同一节点的数据块连续存放, 这是不同节点的相同数据块之间的间距
+    const size_t count_peers = ops->size() - 1; // 要与多少人进行通信
+    const size_t comm_size = count_peers * peer_gap; // 总共要进行的通信的次数
+
+    // 用于 MPI_Waitall()
+    MPI_Request *request = new MPI_Request[comm_size];
+    size_t request_index = 0;
+    MPI_Status *status = new MPI_Status[comm_size];
+
+    int count = len / total_peers; // 单位数据块的大小
+
+    for (const auto &i : *ops)
+    {
+        if (LIKELY(num_peer != i.peer))
+        {
+            for (const auto &j : i.blocks)
+            {
+                MPI_Irecv(buffer + buffer_index, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
+                buffer_index += count;
+            }
+        }
+    }
+
+    MPI_Waitall(request_index, request, status);
+
+    // 通信结束, 开始加和
+    DataType **src = new DataType*[MAX_NUM_BLOCKS];
+    for (int i = 0; i != MAX_NUM_BLOCKS; i++)
+    {
+        src[i] = nullptr;
+    }
+    for (auto i = (*ops)[0].blocks.begin(); i != (*ops)[0].blocks.end(); i++)
+    {
+        size_t start = len / total_peers * (*i);
+        src[0] = data + start;
+        start = (i - (*ops)[0].blocks.begin()) * count;
+        for (size_t j = 0; j != count_peers; j++)
+        {
+            src[j + 1] = buffer + start;
+            start += count * peer_gap;
+        }
+        reduce_sum(src, count_peers + 1, count);
+    }
+}
+
+void handle_recv_broadcast(std::vector<Operation> *ops, DataType *data, size_t len)
+{
+    CHECK_NOTNULL(ops);
+    CHECK_NOTNULL(data);
+
+    size_t start;
+
+    const size_t count_peers = ops->size() - 1; // 要与多少人进行通信
+    const size_t peer_gap = (*ops)[0].blocks.size(); // 与每人通信的次数
+    const size_t comm_size = count_peers * peer_gap; // 总共要进行的通信的次数
+
+    // 用于 MPI_Waitall()
+    MPI_Request *request = new MPI_Request[comm_size];
+    size_t request_index = 0;
+    MPI_Status *status = new MPI_Status[comm_size];
+
+    int count = len / total_peers; // 单位数据块的大小
+
+    for (const auto &i : *ops)
+    {
+        if (LIKELY(num_peer != i.peer))
+        {
+            for (const auto &j : i.blocks)
+            {
+                start = len / total_peers * j;
+                MPI_Irecv(data + start, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
+            }
+        }
+    }
+
+    MPI_Waitall(request_index, request, status);
+}
+
+void all_reduce(DataType *data, size_t len, std::vector<size_t> stages)
+{
+    CHECK_NOTNULL(data);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    LOG_IF(WARNING, num_peer == 0) << "gathering start";
+    Send_Ops send_ops(total_peers, num_peer, stages);
+    Recv_Ops recv_ops(total_peers, num_peer, stages);
+    send_ops.generate_ops();
+    recv_ops.generate_ops();
+    for (size_t i = 0; i != stages.size(); i++)
+    {
+        std::thread send_thread(handle_send, &(send_ops.ops[i]), data, len);
+        std::thread recv_thread(handle_recv_gather, &(recv_ops.ops[i]), data, len);
+        send_thread.join();
+        recv_thread.join();
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    LOG_IF(WARNING, num_peer == 0) << "gathering done";
+    for (int i = stages.size() - 1; i >= 0; i--)
+    {
+        std::thread send_thread(handle_send, &(recv_ops.ops[i]), data, len);
+        std::thread recv_thread(handle_recv_broadcast, &(send_ops.ops[i]), data, len);
+        send_thread.join();
+        recv_thread.join();
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    LOG_IF(WARNING, num_peer == 0) << "broadcast done";
+}
+
 int main(int argc, char **argv)
 {
     FLAGS_colorlogtostderr = true;
     FLAGS_logtostderr = true;
     google::InitGoogleLogging(argv[0]);
-    //LOG(INFO) << "glog initialized.";
-    Send_Ops test(12, 3, {2,3,2});
-    test.generate_ops();
-    test.print_ops();
+    LOG(INFO) << "glog initialized.";
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &total_peers);
+    MPI_Comm_rank(MPI_COMM_WORLD, &num_peer);
+    LOG(INFO) << "total " << total_peers << " and here's " << num_peer;
+    CHECK_EQ(total_peers, 6);
+    if (num_peer == 0) google::InstallFailureSignalHandler();
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    float data[] = {1,2,3,4,5,6,7,8,9,10,11,12};
+    
+    all_reduce(data, 12, {2,3});
+
+    std::cout << "summary " << num_peer << ": ";
+    for (int i = 0; i != 12; i++) std::cout << data[i] << " ";
+    std::cout << std::endl;
+
+    MPI_Finalize();
     google::ShutdownGoogleLogging();
 }

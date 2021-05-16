@@ -5,6 +5,9 @@ set(CMAKE_CXX_COMPILER "g++")
 set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -Wreorder -fPIC -fopenmp -mavx2")
 
 find_package(glog REQUIRED)
+find_package(MPI REQUIRED)
 
-add_executable(aompi allreduce_over_mpi.cpp)
-target_link_libraries(aompi glog pthread)
+include_directories(SYSTEM ${MPI_INCLUDE_PATH})
+
+add_executable(allreduce_over_mpi allreduce_over_mpi.cpp)
+target_link_libraries(allreduce_over_mpi ${MPI_CXX_LIBRARIES} glog pthread)
