@@ -697,7 +697,8 @@ int main(int argc, char **argv)
         {
             ss << i << "-";
         }
-        ss << ".ar_test." << time(NULL) << ".txt";
+        ss << (comm_only ? ".comm_test." : ".ar_test.");
+        ss << time(NULL) << ".txt";
         std::string filename;
         ss >> filename;
         write_vector_to_file(repeat_time, filename);
