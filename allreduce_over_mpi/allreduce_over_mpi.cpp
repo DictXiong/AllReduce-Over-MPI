@@ -408,18 +408,22 @@ void handle_send(std::vector<Operation> *ops, DataType *data, size_t len)
     }
     //LOG_IF(INFO, num_peer == 0) << "START OF SEND";
     MPI_Waitall(request_index, request, status);
+    delete[] request;
+    delete[] status;
     //LOG_IF(INFO, num_peer == 0) << "END OF SEND";
 }
 
+DataType *recv_buffer = nullptr; //必须初始化
 // 接收后, 还负责加和
 void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
 {
     CHECK_NOTNULL(ops);
     CHECK_NOTNULL(data);
 
-    DataType *buffer = new DataType[len]; // 创建 buffer
+    //DataType *recv_buffer = new DataType[len]; // 创建 recv_buffer
+    LOG_IF(FATAL, recv_buffer == nullptr);
     size_t buffer_index = 0;
-    const size_t peer_gap = (*ops)[0].blocks.size(); // buffer 中来自同一节点的数据块连续存放, 这是不同节点的相同数据块之间的间距
+    const size_t peer_gap = (*ops)[0].blocks.size(); // recv_buffer 中来自同一节点的数据块连续存放, 这是不同节点的相同数据块之间的间距
     const size_t count_peers = (ops->size() == 1 ? 1 : ops->size() - 1); // 要与多少人进行通信
     const size_t comm_size = count_peers * peer_gap; // 总共要进行的通信的次数
 
@@ -436,7 +440,7 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
         {
             for (const auto &j : i.blocks)
             {
-                MPI_Irecv(buffer + buffer_index, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
+                MPI_Irecv(recv_buffer + buffer_index, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
                 buffer_index += count;
             }
         } 
@@ -457,11 +461,14 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
         start = (i - (*ops)[0].blocks.begin()) * count;
         for (size_t j = 0; j != count_peers; j++)
         {
-            src[j + 1] = buffer + start;
+            src[j + 1] = recv_buffer + start;
             start += count * peer_gap;
         }
         reduce_sum(src, count_peers + 1, count);
     }
+    delete[] src;
+    delete[] request;
+    delete[] status;
 }
 
 // 接收后, 还负责直接覆盖对应数据块的数据
@@ -496,6 +503,8 @@ void handle_recv_broadcast(std::vector<Operation> *ops, DataType *data, size_t l
     }
 
     MPI_Waitall(request_index, request, status);
+    delete[] request;
+    delete[] status;
 }
 
 void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
@@ -633,6 +642,7 @@ int main(int argc, char **argv)
     CHECK_NE(topo.empty(), true) << "topology should be given!";
     
     DataType *data = new DataType[data_len];
+    recv_buffer = new DataType[data_len * 2];
     char *mpi_buffer = new char[data_len * 10];
     MPI_Buffer_attach(mpi_buffer, data_len * 10);
 
