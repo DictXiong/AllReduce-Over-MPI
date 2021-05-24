@@ -620,6 +620,7 @@ int main(int argc, char **argv)
                 {
                     is_ring = true;
                     LOG_IF(WARNING, num_peer == 0) << "ring allreduce selected";
+                    topo.push_back(1);
                     break;
                 }
                 topo.push_back(tmp);
@@ -628,7 +629,7 @@ int main(int argc, char **argv)
             break;
         }
     }
-    CHECK_NE(topo.empty() && (!is_ring), true) << "topology should be given!";
+    CHECK_NE(topo.empty(), true) << "topology should be given!";
     
     DataType *data = new DataType[data_len];
     char *mpi_buffer = new char[data_len * 10];
@@ -673,7 +674,12 @@ int main(int argc, char **argv)
     if (num_peer == 0)
     {
         std::stringstream ss;
-        ss << total_peers << "." << data_len << ".allreduce_test." << time(NULL) << ".txt";
+        ss << total_peers << "." << data_len << ".";
+        for (auto i : topo)
+        {
+            ss << i << "-";
+        }
+        ss << ".ar_test." << time(NULL) << ".txt";
         std::string filename;
         ss >> filename;
         write_vector_to_file(repeat_time, filename);
