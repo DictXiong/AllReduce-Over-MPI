@@ -514,8 +514,9 @@ void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
         std::thread recv_thread(handle_recv_gather, &(recv_ops.ops[i]), data, len);
         send_thread.join();
         recv_thread.join();
+        MPI_Barrier(MPI_COMM_WORLD);
     }
-    MPI_Barrier(MPI_COMM_WORLD);
+    
     LOG_IF(WARNING, num_peer == 0) << "gathering done";
     for (int i = stages.size() - 1; i >= 0; i--)
     {
@@ -523,8 +524,8 @@ void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
         std::thread recv_thread(handle_recv_broadcast, &(send_ops.ops[i]), data, len);
         send_thread.join();
         recv_thread.join();
+        MPI_Barrier(MPI_COMM_WORLD);
     }
-    MPI_Barrier(MPI_COMM_WORLD);
     LOG_IF(WARNING, num_peer == 0) << "broadcast done";
 }
 
