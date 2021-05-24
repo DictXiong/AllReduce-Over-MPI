@@ -413,6 +413,7 @@ void handle_send(std::vector<Operation> *ops, DataType *data, size_t len)
     //LOG_IF(INFO, num_peer == 0) << "END OF SEND";
 }
 
+bool comm_only = false;
 DataType *recv_buffer = nullptr; //必须初始化
 // 接收后, 还负责加和
 void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
@@ -447,7 +448,10 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
     }
     
     MPI_Waitall(request_index, request, status);
+    delete[] request;
+    delete[] status;
 
+    if (comm_only) return;
     // 通信结束, 开始加和
     DataType **src = new DataType*[MAX_NUM_BLOCKS];
     for (int i = 0; i != MAX_NUM_BLOCKS; i++)
@@ -467,8 +471,6 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len)
         reduce_sum(src, count_peers + 1, count);
     }
     delete[] src;
-    delete[] request;
-    delete[] status;
 }
 
 // 接收后, 还负责直接覆盖对应数据块的数据
@@ -618,6 +620,11 @@ int main(int argc, char **argv)
             ss << argv[i];
             ss >> repeat;
             LOG_IF(WARNING, num_peer == 0) << "repeat: " << repeat;
+        }
+        else if (strcmp(argv[i], "--comm-only") == 0)
+        {
+            comm_only = true;
+            LOG_IF(WARNING, num_peer == 0) << "comm_only. ";
         }
         else if (strcmp(argv[i], "--topo") == 0)
         {
