@@ -2,6 +2,7 @@
 #include<sstream>
 #include<fstream>
 #include<vector>
+#include<string.h>
 #include<thread>
 #include<mpi.h>
 #include "glog/logging.h"
@@ -530,6 +531,7 @@ void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
 void ring_allreduce(DataType *data, size_t len)
 {
     CHECK_NOTNULL(data);
+    CHECK_EQ(0, len % total_peers) << "data length should be an integral multiple of the total bumber of nodes";
     const size_t left = (num_peer == 0 ? total_peers - 1 : num_peer - 1);
     const size_t right = (num_peer == total_peers - 1 ? 0 : num_peer + 1);
     size_t block_send = num_peer;
@@ -566,7 +568,7 @@ void ring_allreduce(DataType *data, size_t len)
 
 int main(int argc, char **argv)
 {
-    const int REPEAT = 1000;
+    int repeat = 1000;
     std::vector<double> repeat_time;
 
     int tmp;
@@ -582,8 +584,52 @@ int main(int argc, char **argv)
     LOG_IF(INFO, num_peer == 0) << "glog initialized.";
     LOG(INFO) << "total " << total_peers << " and here's " << num_peer;
     if (num_peer == 0) google::InstallFailureSignalHandler();
-    
+
     size_t data_len = 336e3;
+    std::vector<size_t> topo;
+    bool is_ring = false;
+    // arg parse
+    for (auto i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "--size") == 0)
+        {
+            i++;
+            CHECK_GE(argc, i);
+            std::stringstream ss;
+            ss << argv[i];
+            ss >> data_len;
+            LOG_IF(WARNING, num_peer == 0) << "data size: " << data_len;
+        }
+        else if (strcmp(argv[i], "--repeat") == 0)
+        {
+            i++;
+            CHECK_GE(argc, i);
+            std::stringstream ss;
+            ss << argv[i];
+            ss >> repeat;
+            LOG_IF(WARNING, num_peer == 0) << "repeat: " << repeat;
+        }
+        else if (strcmp(argv[i], "--topo") == 0)
+        {
+            for (i++; i < argc; i++)
+            {
+                std::stringstream ss;
+                ss << argv[i];
+                ss >> tmp;
+                if (tmp == 1)
+                {
+                    is_ring = true;
+                    LOG_IF(WARNING, num_peer == 0) << "ring allreduce selected";
+                    break;
+                }
+                topo.push_back(tmp);
+            }
+            LOG_IF(WARNING, num_peer == 0 && (!is_ring)) << "tree allreduce selected";
+            break;
+        }
+    }
+    CHECK_NE(topo.empty() && (!is_ring), true) << "topology should be given!";
+    
     DataType *data = new DataType[data_len];
     char *mpi_buffer = new char[data_len * 10];
     MPI_Buffer_attach(mpi_buffer, data_len * 10);
@@ -593,15 +639,29 @@ int main(int argc, char **argv)
         data[i] = i / 1000.0;
     }
     
-    for (auto i = 0; i != REPEAT; i++)
+    if (is_ring)
     {
-        MPI_Barrier(MPI_COMM_WORLD);
-        auto time1 = MPI_Wtime();
-        //ring_allreduce(data, data_len);
-        tree_allreduce(data, data_len, {2,3});
-        auto time2 = MPI_Wtime();
-        repeat_time.push_back(time2 - time1);
+        for (auto i = 0; i != repeat; i++)
+        {
+            MPI_Barrier(MPI_COMM_WORLD);
+            auto time1 = MPI_Wtime();
+            ring_allreduce(data, data_len);
+            auto time2 = MPI_Wtime();
+            repeat_time.push_back(time2 - time1);
+        }
     }
+    else 
+    {
+        for (auto i = 0; i != repeat; i++)
+        {
+            MPI_Barrier(MPI_COMM_WORLD);
+            auto time1 = MPI_Wtime();
+            tree_allreduce(data, data_len, topo);
+            auto time2 = MPI_Wtime();
+            repeat_time.push_back(time2 - time1);
+        }
+    }
+
 
     std::cout << "CHECK " << num_peer << ": ";
     for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
@@ -613,7 +673,7 @@ int main(int argc, char **argv)
     if (num_peer == 0)
     {
         std::stringstream ss;
-        ss << "allreduce_over_mpi_test." << time(NULL) << ".txt";
+        ss << total_peers << "." << data_len << ".allreduce_test." << time(NULL) << ".txt";
         std::string filename;
         ss >> filename;
         write_vector_to_file(repeat_time, filename);
