@@ -1,4 +1,6 @@
 #include<iostream>
+#include<sstream>
+#include<fstream>
 #include<vector>
 #include<thread>
 #include<mpi.h>
@@ -13,6 +15,20 @@ const int INF = 0x3F3F3F3F;
 // 全局变量, 标注当前节点的编号, 和总结点数量
 size_t num_peer, total_peers; 
 
+// util
+template<typename T>
+void write_vector_to_file(std::vector<T> vec, std::string filename)
+{
+    std::ofstream f(filename, std::ios::out);
+    for (auto &i : vec)
+    {
+        f << i << std::endl;
+    }
+    f.close();
+}
+
+
+// Op
 class Operation
 {
 public:    
@@ -550,6 +566,9 @@ void ring_allreduce(DataType *data, size_t len)
 
 int main(int argc, char **argv)
 {
+    const int REPEAT = 1000;
+    std::vector<double> repeat_time;
+
     int tmp;
     FLAGS_colorlogtostderr = true;
     FLAGS_logtostderr = true;
@@ -564,28 +583,43 @@ int main(int argc, char **argv)
     LOG(INFO) << "total " << total_peers << " and here's " << num_peer;
     if (num_peer == 0) google::InstallFailureSignalHandler();
     
-    size_t data_len = 366e5;
+    size_t data_len = 336e3;
     DataType *data = new DataType[data_len];
     char *mpi_buffer = new char[data_len * 10];
     MPI_Buffer_attach(mpi_buffer, data_len * 10);
 
     for (size_t i = 0; i != data_len; i++)
     {
-        data[i] = i / 10.0;
+        data[i] = i / 1000.0;
     }
     
-    MPI_Barrier(MPI_COMM_WORLD);
-    auto time1 = MPI_Wtime();
-    //ring_allreduce(data, data_len);
-    tree_allreduce(data, data_len, {2,3});
-    auto time2 = MPI_Wtime();
+    for (auto i = 0; i != REPEAT; i++)
+    {
+        MPI_Barrier(MPI_COMM_WORLD);
+        auto time1 = MPI_Wtime();
+        //ring_allreduce(data, data_len);
+        tree_allreduce(data, data_len, {2,3});
+        auto time2 = MPI_Wtime();
+        repeat_time.push_back(time2 - time1);
+    }
 
-    std::cout << "summary " << num_peer << ": ";
+    std::cout << "CHECK " << num_peer << ": ";
     for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
     std::cout << std::endl;
 
     MPI_Finalize();
-    LOG_IF(WARNING, num_peer == 0) << "TIME: " << time2 - time1;
+
+    // 写入文件
+    if (num_peer == 0)
+    {
+        std::stringstream ss;
+        ss << "allreduce_over_mpi_test." << time(NULL) << ".txt";
+        std::string filename;
+        ss >> filename;
+        write_vector_to_file(repeat_time, filename);
+    }
+
+    LOG_IF(WARNING, num_peer == 0) << "DONE.";
     google::ShutdownGoogleLogging();
     return 0;
 }
