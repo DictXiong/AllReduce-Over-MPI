@@ -582,6 +582,7 @@ int main(int argc, char **argv)
 {
     int repeat = 1000;
     std::vector<double> repeat_time;
+    int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
 
     int tmp;
     FLAGS_colorlogtostderr = true;
@@ -599,7 +600,6 @@ int main(int argc, char **argv)
 
     size_t data_len = 336e3;
     std::vector<size_t> topo;
-    bool is_ring = false;
     // arg parse
     for (auto i = 1; i < argc; i++)
     {
@@ -635,15 +635,26 @@ int main(int argc, char **argv)
                 ss >> tmp;
                 if (tmp == 1)
                 {
-                    is_ring = true;
+                    comm_type = 1;
                     LOG_IF(WARNING, num_peer == 0) << "ring allreduce selected";
                     topo.push_back(1);
                     break;
                 }
+                if (tmp == 0)
+                {
+                    comm_type = 2;
+                    LOG_IF(WARNING, num_peer == 0) << "mpi allreduce selected";
+                    topo.push_back(0);
+                    break;
+                }
                 topo.push_back(tmp);
             }
-            LOG_IF(WARNING, num_peer == 0 && (!is_ring)) << "tree allreduce selected";
+            LOG_IF(WARNING, num_peer == 0 && (comm_type == 0)) << "tree allreduce selected";
             break;
+        }
+        else
+        {
+            LOG(FATAL) << "unknown parameter: " << argv[i];
         }
     }
     CHECK_NE(topo.empty(), true) << "topology should be given!";
@@ -658,18 +669,7 @@ int main(int argc, char **argv)
         data[i] = i / 1000.0;
     }
     
-    if (is_ring)
-    {
-        for (auto i = 0; i != repeat; i++)
-        {
-            MPI_Barrier(MPI_COMM_WORLD);
-            auto time1 = MPI_Wtime();
-            ring_allreduce(data, data_len);
-            auto time2 = MPI_Wtime();
-            repeat_time.push_back(time2 - time1);
-        }
-    }
-    else 
+    if (comm_type == 0) //tree
     {
         for (auto i = 0; i != repeat; i++)
         {
@@ -680,6 +680,34 @@ int main(int argc, char **argv)
             repeat_time.push_back(time2 - time1);
         }
     }
+    else if (comm_type == 1) //ring
+    {
+        for (auto i = 0; i != repeat; i++)
+        {
+            MPI_Barrier(MPI_COMM_WORLD);
+            auto time1 = MPI_Wtime();
+            ring_allreduce(data, data_len);
+            auto time2 = MPI_Wtime();
+            repeat_time.push_back(time2 - time1);
+        }
+    }
+    else if (comm_type == 2) //mpi
+    {
+        for (auto i = 0; i != repeat; i++)
+        {
+            MPI_Barrier(MPI_COMM_WORLD);
+            auto time1 = MPI_Wtime();
+            MPI_Allreduce(data, recv_buffer, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            auto time2 = MPI_Wtime();
+            repeat_time.push_back(time2 - time1);
+            memcpy(data, recv_buffer, data_len * sizeof(DataType));
+        }
+    }
+    else 
+    {
+        LOG(FATAL) << "unknown comm type: " << comm_type;
+    }
+
 
 
     std::cout << "CHECK " << num_peer << ": ";
