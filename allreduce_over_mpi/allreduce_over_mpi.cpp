@@ -514,7 +514,7 @@ void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
     CHECK_NOTNULL(data);
     CHECK_EQ(0, len % total_peers) << "data length should be an integral multiple of the total bumber of nodes";
 
-    LOG_IF(WARNING, num_peer == 0) << "gathering start";
+    //LOG_IF(WARNING, num_peer == 0) << "gathering start";
     Send_Ops send_ops(total_peers, num_peer, stages);
     Recv_Ops recv_ops(total_peers, num_peer, stages);
     send_ops.generate_ops();
@@ -528,7 +528,7 @@ void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
         MPI_Barrier(MPI_COMM_WORLD);
     }
     
-    LOG_IF(WARNING, num_peer == 0) << "gathering done";
+    //LOG_IF(WARNING, num_peer == 0) << "gathering done";
     for (int i = stages.size() - 1; i >= 0; i--)
     {
         std::thread send_thread(handle_send, &(recv_ops.ops[i]), data, len);
@@ -537,7 +537,7 @@ void tree_allreduce(DataType *data, size_t len, std::vector<size_t> stages)
         recv_thread.join();
         MPI_Barrier(MPI_COMM_WORLD);
     }
-    LOG_IF(WARNING, num_peer == 0) << "broadcast done";
+    //LOG_IF(WARNING, num_peer == 0) << "broadcast done";
 }
 
 void ring_allreduce(DataType *data, size_t len)
@@ -549,7 +549,7 @@ void ring_allreduce(DataType *data, size_t len)
     size_t block_send = num_peer;
     size_t block_recv = left;
     
-    LOG_IF(WARNING, num_peer == 0) << "gathering start";
+    //LOG_IF(WARNING, num_peer == 0) << "gathering start";
     for (size_t i = 0; i != total_peers - 1; i++)
     {
         std::vector<Operation> send_ops = {Operation(right, block_send)};
@@ -562,7 +562,7 @@ void ring_allreduce(DataType *data, size_t len)
         block_send = (block_send == 0 ? total_peers - 1 : block_send - 1);
         block_recv = (block_recv == 0 ? total_peers - 1 : block_recv - 1);
     }
-    LOG_IF(WARNING, num_peer == 0) << "gathering done";
+    //LOG_IF(WARNING, num_peer == 0) << "gathering done";
     for (size_t i = 0; i != total_peers - 1; i++)
     {
         std::vector<Operation> send_ops = {Operation(right, block_send)};
@@ -575,14 +575,16 @@ void ring_allreduce(DataType *data, size_t len)
         block_send = (block_send == 0 ? total_peers - 1 : block_send - 1);
         block_recv = (block_recv == 0 ? total_peers - 1 : block_recv - 1);
     }
-    LOG_IF(WARNING, num_peer == 0) << "broadcast done";
+    //LOG_IF(WARNING, num_peer == 0) << "broadcast done";
 }
 
 int main(int argc, char **argv)
 {
-    int repeat = 1000;
+    int repeat = 1;
     std::vector<double> repeat_time;
+    double sum_time = 0;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
+    bool to_file = true;
 
     int tmp;
     FLAGS_colorlogtostderr = true;
@@ -598,6 +600,7 @@ int main(int argc, char **argv)
     LOG(INFO) << "total " << total_peers << " and here's " << num_peer;
     if (num_peer == 0) google::InstallFailureSignalHandler();
 
+    MPI_Barrier(MPI_COMM_WORLD);
     size_t data_len = 336e3;
     std::vector<size_t> topo;
     // arg parse
@@ -610,7 +613,7 @@ int main(int argc, char **argv)
             std::stringstream ss;
             ss << argv[i];
             ss >> data_len;
-            LOG_IF(WARNING, num_peer == 0) << "data size: " << data_len;
+            LOG_IF(WARNING, num_peer == 0) << "data size = " << data_len;
         }
         else if (strcmp(argv[i], "--repeat") == 0)
         {
@@ -619,12 +622,12 @@ int main(int argc, char **argv)
             std::stringstream ss;
             ss << argv[i];
             ss >> repeat;
-            LOG_IF(WARNING, num_peer == 0) << "repeat: " << repeat;
+            LOG_IF(WARNING, num_peer == 0) << "repeat = " << repeat;
         }
         else if (strcmp(argv[i], "--comm-only") == 0)
         {
             comm_only = true;
-            LOG_IF(WARNING, num_peer == 0) << "comm_only. ";
+            LOG_IF(WARNING, num_peer == 0) << "comm_only = true";
         }
         else if (strcmp(argv[i], "--topo") == 0)
         {
@@ -652,6 +655,11 @@ int main(int argc, char **argv)
             LOG_IF(WARNING, num_peer == 0 && (comm_type == 0)) << "tree allreduce selected";
             break;
         }
+        else if (strcmp(argv[i], "--not-to-file") == 0)
+        {
+            to_file = false;
+            LOG_IF(WARNING, num_peer == 1) << "to file = false";
+        }
         else
         {
             LOG(FATAL) << "unknown parameter: " << argv[i];
@@ -668,7 +676,7 @@ int main(int argc, char **argv)
     {
         data[i] = i / 1000.0;
     }
-    
+    LOG_IF(INFO, num_peer == 0) << "READY";
     if (comm_type == 0) //tree
     {
         for (auto i = 0; i != repeat; i++)
@@ -678,6 +686,8 @@ int main(int argc, char **argv)
             tree_allreduce(data, data_len, topo);
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
+            sum_time += time2 - time1;
+            LOG_IF(WARNING, num_peer == 0) << "repeat " << i << " finished"; 
         }
     }
     else if (comm_type == 1) //ring
@@ -689,6 +699,8 @@ int main(int argc, char **argv)
             ring_allreduce(data, data_len);
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
+            sum_time += time2 - time1;
+            LOG_IF(WARNING, num_peer == 0) << "repeat " << i << " finished"; 
         }
     }
     else if (comm_type == 2) //mpi
@@ -700,7 +712,9 @@ int main(int argc, char **argv)
             MPI_Allreduce(data, recv_buffer, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
+            sum_time += time2 - time1;
             memcpy(data, recv_buffer, data_len * sizeof(DataType));
+            LOG_IF(WARNING, num_peer == 0) << "repeat " << i << " finished"; 
         }
     }
     else 
@@ -709,15 +723,21 @@ int main(int argc, char **argv)
     }
 
 
-
-    std::cout << "CHECK " << num_peer << ": ";
-    for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
-    std::cout << std::endl;
-
+    for (int i = 0; i != total_peers; i++)
+    {
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (i == num_peer)
+        {
+            std::cout << "CHECK " << num_peer << ": ";
+            for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
+            std::cout << std::endl;
+        }
+    }
+    
     MPI_Finalize();
 
     // 写入文件
-    if (num_peer == 0)
+    if (num_peer == 0 && to_file)
     {
         std::stringstream ss;
         ss << total_peers << "." << data_len << ".";
@@ -732,7 +752,7 @@ int main(int argc, char **argv)
         write_vector_to_file(repeat_time, filename);
     }
 
-    LOG_IF(WARNING, num_peer == 0) << "DONE.";
+    LOG_IF(WARNING, num_peer == 0) << "DONE, average time: " << sum_time / repeat;
     google::ShutdownGoogleLogging();
     return 0;
 }
