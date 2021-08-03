@@ -118,7 +118,17 @@ public:
         }
         if (num_lonely != 0)
         {
-            std::cout << "and " << num_lonely << " lonely node(s)." << std::endl;
+            std::cout << "and " << num_lonely << " lonely node(s):" << std::endl;
+            std::cout << "┕ lonely";
+            for (const auto &j:lonely_ops)
+            {
+                std::cout<< " | node " << j.peer<<": ";
+                for (auto k:j.blocks)
+                {
+                    std::cout<<k<<",";
+                }
+            }
+            std::cout<<std::endl;
         }
     }
 };
@@ -457,7 +467,6 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len,
     MPI_Status *status = new MPI_Status[comm_size];
 
     int count = len / num_split; // 单位数据块的大小
-
     for (const auto &i : *ops)
     {
         if (LIKELY(node_label != i.peer))
@@ -469,7 +478,6 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len,
             }
         } 
     }
-    
     MPI_Waitall(request_index, request, status);
     delete[] request;
     delete[] status;
@@ -496,13 +504,14 @@ void handle_recv_gather(std::vector<Operation> *ops, DataType *data, size_t len,
     delete[] src;
 }
 
-// 接收后, 还负责直接覆盖对应数据块的数据
-void handle_recv_broadcast(std::vector<Operation> *ops, DataType *data, size_t len, size_t num_split, size_t node_label)
+// 接收后, 还负责直接覆写数据. 
+// accordingly 参数的含义是, 如果为 true, 那么把数据块写到 data 中对应的位置去; 如果为 false, 那么直接平铺在 data 中.
+void handle_recv_overwrite(std::vector<Operation> *ops, DataType *data, size_t len, size_t num_split, size_t node_label, bool accordingly)
 {
     CHECK_NOTNULL(ops);
     CHECK_NOTNULL(data);
 
-    size_t start;
+    size_t start = 0;
 
     const size_t count_peers = (ops->size() == 1 ? 1 : ops->size() - 1); // 要与多少人进行通信
     const size_t peer_gap = (*ops)[0].blocks.size(); // 与每人通信的次数
@@ -521,8 +530,15 @@ void handle_recv_broadcast(std::vector<Operation> *ops, DataType *data, size_t l
         {
             for (const auto &j : i.blocks)
             {
-                start = len / num_split * j;
+                if (accordingly) 
+                {
+                    start = len / num_split * j;
+                }
                 MPI_Irecv(data + start, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
+                if (!accordingly)
+                {
+                    start += len / num_split;
+                }
             }
         }
     }
@@ -539,19 +555,24 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
     CHECK_EQ(0, len % (num_nodes - num_lonely)) << "data length should be an integral multiple of the total bumber of nodes";
 
     size_t num_split = num_nodes - num_lonely;
-    //LOG_IF(WARNING, node_label == 0) << "gathering start";
+    LOG_IF(WARNING, node_label == 0) << "gathering start";
     Send_Ops send_ops(num_nodes, num_lonely, node_label, stages);
     Recv_Ops recv_ops(num_nodes, num_lonely, node_label, stages);
     send_ops.generate_ops();
     recv_ops.generate_ops();
+    if (node_label == 0)
+    {
+        send_ops.print_ops();
+        recv_ops.print_ops();
+    } 
     std::thread *lonely_thread;
+    MPI_Comm sub_comm = MPI_COMM_WORLD;
     if (node_label < num_split)
     {
-        MPI_Comm *sub_comm = new MPI_Comm(MPI_COMM_WORLD);
-        if (num_lonely != 0)
+        if (num_lonely > 0)
         {
-            lonely_thread = new std::thread(handle_recv_broadcast, &(recv_ops.lonely_ops), data, len, num_split, node_label);
-            MPI_Comm_split(MPI_COMM_WORLD, 12, node_label, sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
+            MPI_Comm_split(MPI_COMM_WORLD, 0, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
+            lonely_thread = new std::thread(handle_recv_overwrite, &(recv_ops.lonely_ops), data + len, len, num_split, node_label, false);
         }
         for (size_t i = 0; i != stages.size(); i++)
         {
@@ -559,14 +580,16 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             std::thread recv_thread(handle_recv_gather, &(recv_ops.ops[i]), data, len, num_split, node_label);
             send_thread.join();
             recv_thread.join();
-            MPI_Barrier(*sub_comm);
+            MPI_Barrier(sub_comm);
         }
         // 处理孤立节点
-        if (num_lonely != 0)
+        if (num_lonely > 0)
         {
             lonely_thread->join();
             DataType **src = new DataType*[MAX_NUM_BLOCKS];
             src[0] = data + len / num_split * node_label;
+            LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * node_label + 1);
+            LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * (num_split) + 1);
             for (size_t i = 0; i < num_lonely; i++)
             {
                 src[i + 1] = data + len / num_split * (num_split + i);
@@ -575,20 +598,20 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             MPI_Barrier(MPI_COMM_WORLD);
         }
         
-        if (num_lonely != 0)
+        if (num_lonely > 0)
         {
             lonely_thread = new std::thread(handle_send, &(recv_ops.lonely_ops), data, len, num_split, node_label);
         }
-        //LOG_IF(WARNING, node_label == 0) << "gathering done";
+        LOG_IF(WARNING, node_label == 0) << "gathering done";
         for (int i = stages.size() - 1; i >= 0; i--)
         {
             std::thread send_thread(handle_send, &(recv_ops.ops[i]), data, len, num_split, node_label);
-            std::thread recv_thread(handle_recv_broadcast, &(send_ops.ops[i]), data, len, num_split, node_label);
+            std::thread recv_thread(handle_recv_overwrite, &(send_ops.ops[i]), data, len, num_split, node_label, true);
             send_thread.join();
             recv_thread.join();
-            MPI_Barrier(*sub_comm);
+            MPI_Barrier(sub_comm);
         }
-        if (num_lonely != 0)
+        if (num_lonely > 0)
         {
             lonely_thread->join();
             MPI_Barrier(MPI_COMM_WORLD);
@@ -596,12 +619,16 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
     }
     else 
     {
+        MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
+        LOG(WARNING) << "LONELY send start";
         handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label);
+        LOG(WARNING) << "LONELY send done";
         MPI_Barrier(MPI_COMM_WORLD);
-        handle_recv_broadcast(&(send_ops.lonely_ops), data, len, num_split, node_label);
+        LOG(WARNING) << "LONELY recv start";
+        handle_recv_overwrite(&(send_ops.lonely_ops), data, len, num_split, node_label, true);
         MPI_Barrier(MPI_COMM_WORLD);
     }
-    //LOG_IF(WARNING, node_label == 0) << "broadcast done";
+    LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
 void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_label)
@@ -632,7 +659,7 @@ void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_la
         std::vector<Operation> send_ops = {Operation(right, block_send)};
         std::vector<Operation> recv_ops = {Operation(left, block_recv)};
         std::thread send_thread(handle_send, &send_ops, data, len, num_nodes, node_label);
-        std::thread recv_thread(handle_recv_broadcast, &recv_ops, data, len, num_nodes, node_label);
+        std::thread recv_thread(handle_recv_overwrite, &recv_ops, data, len, num_nodes, node_label, true);
         send_thread.join();
         recv_thread.join();
         MPI_Barrier(MPI_COMM_WORLD);
@@ -644,9 +671,10 @@ void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_la
 
 int main(int argc, char **argv)
 {
-    // 当前节点的编号, 总结点数量, 数据块划分的数量, 孤立节点数量
-    size_t node_label, total_peers, num_split, num_lonely; 
+    // 当前节点的编号, 总结点数量, 孤立节点数量
+    size_t node_label, total_peers, num_lonely = 0; 
 
+    // 命令行参数
     int repeat = 1;
     std::vector<double> repeat_time;
     double sum_time = 0;
@@ -706,6 +734,7 @@ int main(int argc, char **argv)
                     ss << (argv[i] + 1);
                     ss >> tmp;
                     num_lonely = tmp;
+                    LOG_IF(WARNING, node_label == 0) << "Here's " << tmp << " lonely node(s)";
                     break;
                 }
                 ss << argv[i];
@@ -741,15 +770,16 @@ int main(int argc, char **argv)
     }
     CHECK_NE(topo.empty(), true) << "topology should be given!";
     
-    DataType *data = new DataType[data_len];
+    // 初始化 data 和 buffer
+    DataType *data = new DataType[data_len * 2];
     recv_buffer = new DataType[data_len * 2];
     char *mpi_buffer = new char[data_len * 10];
     MPI_Buffer_attach(mpi_buffer, data_len * 10);
-
     for (size_t i = 0; i != data_len; i++)
     {
         data[i] = i / 1000.0;
     }
+    // 准备就绪
     LOG_IF(INFO, node_label == 0) << "READY";
     if (comm_type == 0) //tree
     {
