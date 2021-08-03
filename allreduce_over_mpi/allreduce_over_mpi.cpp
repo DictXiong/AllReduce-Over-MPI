@@ -434,16 +434,16 @@ void handle_send(std::vector<Operation> *ops, DataType *data, size_t len, size_t
             for (const auto &j : i.blocks)
             {
                 start = len / num_split * j;
-                //LOG_IF(INFO, node_label == 0) << "##0 send " << j << " which is " << start << "+" << count << " to " << i.peer ;
+                //LOG_IF(INFO, node_label == 4) << "##4 send " << j << " which is " << start << "+" << count << " to " << i.peer ;
                 MPI_Isend(data + start, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
             }
         }
     }
-    //LOG_IF(INFO, node_label == 0) << "START OF SEND";
+    //LOG_IF(INFO, node_label == 4) << "START OF SEND";
     MPI_Waitall(request_index, request, status);
     delete[] request;
     delete[] status;
-    //LOG_IF(INFO, node_label == 0) << "END OF SEND";
+    //LOG_IF(INFO, node_label == 4) << "END OF SEND";
 }
 
 bool comm_only = false;
@@ -513,7 +513,7 @@ void handle_recv_overwrite(std::vector<Operation> *ops, DataType *data, size_t l
 
     size_t start = 0;
 
-    const size_t count_peers = (ops->size() == 1 ? 1 : ops->size() - 1); // 要与多少人进行通信
+    const size_t count_peers = ops->size(); // 要与多少人进行通信. 这个值可能大了 1, 因为 ops 里可能包含与自己的通讯, 但是大了好.
     const size_t peer_gap = (*ops)[0].blocks.size(); // 与每人通信的次数
     const size_t comm_size = count_peers * peer_gap; // 总共要进行的通信的次数
 
@@ -548,23 +548,17 @@ void handle_recv_overwrite(std::vector<Operation> *ops, DataType *data, size_t l
     delete[] status;
 }
 
-// 要改! num_split
 void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lonely, size_t node_label, std::vector<size_t> stages)
 {
     CHECK_NOTNULL(data);
     CHECK_EQ(0, len % (num_nodes - num_lonely)) << "data length should be an integral multiple of the total bumber of nodes";
 
     size_t num_split = num_nodes - num_lonely;
-    LOG_IF(WARNING, node_label == 0) << "gathering start";
+    //LOG_IF(WARNING, node_label == 0) << "gathering start";
     Send_Ops send_ops(num_nodes, num_lonely, node_label, stages);
     Recv_Ops recv_ops(num_nodes, num_lonely, node_label, stages);
     send_ops.generate_ops();
     recv_ops.generate_ops();
-    if (node_label == 0)
-    {
-        send_ops.print_ops();
-        recv_ops.print_ops();
-    } 
     std::thread *lonely_thread;
     MPI_Comm sub_comm = MPI_COMM_WORLD;
     if (node_label < num_split)
@@ -588,8 +582,8 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             lonely_thread->join();
             DataType **src = new DataType*[MAX_NUM_BLOCKS];
             src[0] = data + len / num_split * node_label;
-            LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * node_label + 1);
-            LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * (num_split) + 1);
+            //LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * node_label + 1);
+            //LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * (num_split) + 1);
             for (size_t i = 0; i < num_lonely; i++)
             {
                 src[i + 1] = data + len / num_split * (num_split + i);
@@ -602,7 +596,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         {
             lonely_thread = new std::thread(handle_send, &(recv_ops.lonely_ops), data, len, num_split, node_label);
         }
-        LOG_IF(WARNING, node_label == 0) << "gathering done";
+        //LOG_IF(WARNING, node_label == 0) << "gathering done";
         for (int i = stages.size() - 1; i >= 0; i--)
         {
             std::thread send_thread(handle_send, &(recv_ops.ops[i]), data, len, num_split, node_label);
@@ -620,15 +614,15 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
     else 
     {
         MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
-        LOG(WARNING) << "LONELY send start";
+        //LOG(WARNING) << "LONELY send start";
         handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label);
-        LOG(WARNING) << "LONELY send done";
+        //LOG(WARNING) << "LONELY send done";
         MPI_Barrier(MPI_COMM_WORLD);
-        LOG(WARNING) << "LONELY recv start";
+        //LOG(WARNING) << "LONELY recv start";
         handle_recv_overwrite(&(send_ops.lonely_ops), data, len, num_split, node_label, true);
         MPI_Barrier(MPI_COMM_WORLD);
     }
-    LOG_IF(WARNING, node_label == 0) << "broadcast done";
+    //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
 void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_label)
@@ -677,7 +671,7 @@ int main(int argc, char **argv)
     // 命令行参数
     int repeat = 1;
     std::vector<double> repeat_time;
-    double sum_time = 0;
+    double sum_time = 0, min_time = INF;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = true;
 
@@ -693,7 +687,8 @@ int main(int argc, char **argv)
     node_label = tmp;
     LOG_IF(INFO, node_label == 0) << "glog initialized.";
     LOG(INFO) << "total " << total_peers << " and here's " << node_label;
-    if (node_label == 0) google::InstallFailureSignalHandler();
+    if (node_label == 0) 
+        google::InstallFailureSignalHandler();
 
     MPI_Barrier(MPI_COMM_WORLD);
     size_t data_len = 336e3;
@@ -791,6 +786,7 @@ int main(int argc, char **argv)
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
+            min_time = std::min(time2 - time1, min_time);
             LOG_IF(WARNING, node_label == 0) << "repeat " << i << " finished"; 
         }
     }
@@ -804,6 +800,7 @@ int main(int argc, char **argv)
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
+            min_time = std::min(time2 - time1, min_time);
             LOG_IF(WARNING, node_label == 0) << "repeat " << i << " finished"; 
         }
     }
@@ -817,6 +814,7 @@ int main(int argc, char **argv)
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
+            min_time = std::min(time2 - time1, min_time);
             memcpy(data, recv_buffer, data_len * sizeof(DataType));
             LOG_IF(WARNING, node_label == 0) << "repeat " << i << " finished"; 
         }
@@ -856,7 +854,7 @@ int main(int argc, char **argv)
         write_vector_to_file(repeat_time, filename);
     }
 
-    LOG_IF(WARNING, node_label == 0) << "DONE, average time: " << sum_time / repeat;
+    LOG_IF(WARNING, node_label == 0) << "DONE, average time: " << sum_time / repeat << ", min time: " << min_time << std::endl;
     google::ShutdownGoogleLogging();
     return 0;
 }
