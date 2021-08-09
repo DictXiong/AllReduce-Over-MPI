@@ -13,6 +13,13 @@
 typedef float DataType;
 const int INF = 0x3F3F3F3F;
 
+#define SHOW_TIME // 显示更多的时间调试信息
+#ifdef SHOW_TIME
+double _time_base;
+#define TIME_RESET() do {_time_base=MPI_Wtime();} while (false)
+#define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<":: "<<note;} while (false)
+#endif
+
 // util
 template<typename T>
 void write_vector_to_file(std::vector<T> vec, std::string filename)
@@ -546,6 +553,10 @@ void handle_recv_overwrite(std::vector<Operation> *ops, DataType *data, size_t l
     MPI_Waitall(request_index, request, status);
     delete[] request;
     delete[] status;
+#ifdef SHOW_TIME
+    TIME_LOG_IF(node_label == 0 && accordingly == false, "Node 0 lonely recv done");
+#endif
+    
 }
 
 void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lonely, size_t node_label, std::vector<size_t> stages)
@@ -561,11 +572,14 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
     recv_ops.generate_ops();
     std::thread *lonely_thread;
     MPI_Comm sub_comm = MPI_COMM_WORLD;
+#ifdef SHOW_TIME
+    TIME_RESET();
+#endif
     if (node_label < num_split)
     {
         if (num_lonely > 0)
         {
-            MPI_Comm_split(MPI_COMM_WORLD, 0, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
+            MPI_Comm_split(MPI_COMM_WORLD, 0, node_label, &sub_comm); // 这个 0 是 magic number, 用来标注本组的颜色.
             lonely_thread = new std::thread(handle_recv_overwrite, &(recv_ops.lonely_ops), data + len, len, num_split, node_label, false);
         }
         for (size_t i = 0; i != stages.size(); i++)
@@ -574,7 +588,13 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             std::thread recv_thread(handle_recv_gather, &(recv_ops.ops[i]), data, len, num_split, node_label);
             send_thread.join();
             recv_thread.join();
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "Node 0 FlexTree gather done");
+#endif
             MPI_Barrier(sub_comm);
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "All Nodes FlexTree gather done");
+#endif
         }
         // 处理孤立节点
         if (num_lonely > 0)
@@ -589,7 +609,13 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
                 src[i + 1] = data + len / num_split * (num_split + i);
             }
             reduce_sum(src, num_lonely + 1, len / num_split);
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "Node 0 lonely reduce done");
+#endif
             MPI_Barrier(MPI_COMM_WORLD);
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "All Nodes lonely reduce done");
+#endif
         }
         
         if (num_lonely > 0)
@@ -613,7 +639,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
     }
     else 
     {
-        MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
+        MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 1 是 magic number, 用来标注本组的颜色.
         //LOG(WARNING) << "LONELY send start";
         handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label);
         //LOG(WARNING) << "LONELY send done";
@@ -670,15 +696,20 @@ int main(int argc, char **argv)
 
     // 命令行参数
     int repeat = 1;
-    std::vector<double> repeat_time;
     double sum_time = 0, min_time = INF;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = true;
 
+    // others
+    std::vector<double> repeat_time;
     int tmp;
+
+    // init glog
     FLAGS_colorlogtostderr = true;
     FLAGS_logtostderr = true;
     google::InitGoogleLogging(argv[0]);
+
+    // init mpi
     MPI_Init_thread(&argc,&argv, MPI_THREAD_MULTIPLE, &tmp);
     CHECK_EQ(tmp, MPI_THREAD_MULTIPLE) << "MPI_THREAD_MULTIPLE thread support required " <<  tmp;
     MPI_Comm_size(MPI_COMM_WORLD, &tmp);
@@ -689,6 +720,7 @@ int main(int argc, char **argv)
     LOG(INFO) << "total " << total_peers << " and here's " << node_label;
     if (node_label == 0) 
         google::InstallFailureSignalHandler();
+    // end init
 
     MPI_Barrier(MPI_COMM_WORLD);
     size_t data_len = 336e3;
