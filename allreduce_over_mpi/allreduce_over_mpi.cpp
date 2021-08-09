@@ -629,12 +629,24 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             std::thread recv_thread(handle_recv_overwrite, &(send_ops.ops[i]), data, len, num_split, node_label, true);
             send_thread.join();
             recv_thread.join();
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "Node 0 FlexTree broadcast done");
+#endif
             MPI_Barrier(sub_comm);
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "ALL FlexTree broadcast done");
+#endif
         }
         if (num_lonely > 0)
         {
             lonely_thread->join();
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "Node 0 lonely broadcast done");
+#endif
             MPI_Barrier(MPI_COMM_WORLD);
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "ALL lonely broadcast done");
+#endif
         }
     }
     else 
