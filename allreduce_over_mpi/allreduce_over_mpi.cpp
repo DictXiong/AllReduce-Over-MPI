@@ -673,7 +673,12 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
 #endif
         if (num_lonely > 0)
         {
-            lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
+            // 测试是否和内存锁有关系
+            size_t start = len / num_split * node_label;
+            memcpy(data + len + start, data + start, sizeof(DataType) * len / num_split);
+            lonely_request_index = handle_send(&(recv_ops.lonely_ops), data + len, len, num_split, node_label, lonely_requests);
+            // end
+            //lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
         }
         for (int i = stages.size() - 1; i >= 0; i--)
         {
