@@ -649,7 +649,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             tmp = handle_recv(&(recv_ops.ops[i]), recv_buffer, len, num_split, node_label, false, requests + request_index);
             LOG(INFO) << "WHICH?";
             MPI_Waitall(tmp, requests + request_index, status);
-            if (lonely_requests == 0 || i != stages.size() - 1)
+            if (lonely_request_index == 0 || i != stages.size() - 1)
             {
                 handle_reduce(&(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1);
             }
@@ -683,6 +683,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             LOG(INFO) << "WHICH?";
             MPI_Waitall(lonely_request_index, lonely_requests, status);
             MPI_Barrier(MPI_COMM_WORLD);
+            LOG(INFO) << node_label << " comes here.";
             delete[] lonely_requests;
         }
     }
@@ -701,8 +702,10 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         LOG(INFO) << "WHICH? (lone)";
         MPI_Waitall(lonely_request_index, lonely_requests, status);
         MPI_Barrier(MPI_COMM_WORLD);
+        LOG(INFO) << node_label << " comes here.";
         delete[] lonely_requests;
     }
+    LOG(INFO) << node_label << " comes here.";
     delete[] requests;
     delete[] status;
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
