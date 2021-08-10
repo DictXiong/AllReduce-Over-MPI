@@ -17,7 +17,7 @@ const int INF = 0x3F3F3F3F;
 #ifdef SHOW_TIME
 double _time_base;
 #define TIME_RESET() do {_time_base=MPI_Wtime();} while (false)
-#define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<":: "<<note;} while (false)
+#define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<" :: "<<note;} while (false)
 #endif
 
 // util
@@ -651,18 +651,26 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             if (lonely_request_index == 0 || i != stages.size() - 1)
             {
                 handle_reduce(&(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1);
+#ifdef SHOW_TIME
+                TIME_LOG_IF(node_label == 0 && i == stages.size() - 1, "node 0 ft gather finished");
+#endif SHOW_TIME
             }
             else
             {
                 MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+                TIME_LOG_IF(node_label == 0, "node 0 lonely gather finished");
+#endif SHOW_TIME
                 handle_reduce(&(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1, data + len, num_lonely);
             }
             MPI_Waitall(request_index, requests, status);
             MPI_Barrier(sub_comm);
         }
         if (num_lonely > 0) MPI_Barrier(MPI_COMM_WORLD);
-        
         //LOG_IF(WARNING, node_label == 0) << "gathering done";
+#ifdef SHOW_TIME
+        TIME_RESET();
+#endif
         if (num_lonely > 0)
         {
             lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
@@ -674,9 +682,15 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             MPI_Waitall(request_index, requests, status);
             MPI_Barrier(sub_comm);
         }
+#ifdef SHOW_TIME
+                TIME_LOG_IF(node_label == 0, "node 0 ft broadcast finished");
+#endif SHOW_TIME
         if (num_lonely > 0)
         {
             MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+                TIME_LOG_IF(node_label == 0, "node 0 lonely broadcast finished");
+#endif SHOW_TIME
             MPI_Barrier(MPI_COMM_WORLD);
             delete[] lonely_requests;
         }
@@ -687,23 +701,23 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 1 是 magic number, 用来标注本组的颜色.
         //LOG(WARNING) << "LONELY send start";
         lonely_request_index = handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
-        //LOG(INFO) << "WHICH? (lone)";
         MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+        TIME_LOG_IF(true, "lonely send finished");
+#endif SHOW_TIME
         //LOG(WARNING) << "LONELY send done";
         MPI_Barrier(MPI_COMM_WORLD);
         //LOG(WARNING) << "LONELY recv start";
         lonely_request_index = handle_recv(&(send_ops.lonely_ops), data, len, num_split, node_label, true, lonely_requests);
-        //LOG(INFO) << "WHICH? (lone)";
         MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+        TIME_LOG_IF(true, "lonely recv finished");
+#endif SHOW_TIME
         MPI_Barrier(MPI_COMM_WORLD);
-        //LOG(INFO) << node_label << " comes here.";
         delete[] lonely_requests;
-        //LOG(INFO) << node_label << " free here.";
     }
-    //LOG(INFO) << node_label << " comes here.";
     delete[] requests;
     delete[] status;
-    //LOG(INFO) << node_label << " free here.";
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
