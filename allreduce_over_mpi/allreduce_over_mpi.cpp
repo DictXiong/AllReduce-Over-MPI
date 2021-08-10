@@ -707,6 +707,9 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
 #endif SHOW_TIME
         //LOG(WARNING) << "LONELY send done";
         MPI_Barrier(MPI_COMM_WORLD);
+#ifdef SHOW_TIME
+        TIME_RESET();
+#endif
         //LOG(WARNING) << "LONELY recv start";
         lonely_request_index = handle_recv(&(send_ops.lonely_ops), data, len, num_split, node_label, true, lonely_requests);
         MPI_Waitall(lonely_request_index, lonely_requests, status);
