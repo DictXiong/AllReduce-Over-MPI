@@ -642,6 +642,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             lonely_requests = new MPI_Request[num_lonely << 1];
             MPI_Comm_split(MPI_COMM_WORLD, 0, node_label, &sub_comm); // 这个 0 是 magic number, 用来标注本组的颜色.
             lonely_request_index = handle_recv(&(recv_ops.lonely_ops), data + len, len, num_split, node_label, false, lonely_requests);
+            delete[] lonely_requests;
         }
         for (size_t i = 0; i != stages.size(); i++)
         {
@@ -693,7 +694,10 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         lonely_request_index = handle_recv(&(send_ops.lonely_ops), data, len, num_split, node_label, true, lonely_requests);
         MPI_Waitall(lonely_request_index, lonely_requests, status);
         MPI_Barrier(MPI_COMM_WORLD);
+        delete[] lonely_requests;
     }
+    delete[] requests;
+    delete[] status;
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
@@ -737,6 +741,8 @@ void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_la
         block_recv = (block_recv == 0 ? num_nodes - 1 : block_recv - 1);
     }
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
+    delete[] requests;
+    delete[] status;
 }
 
 int main(int argc, char **argv)
