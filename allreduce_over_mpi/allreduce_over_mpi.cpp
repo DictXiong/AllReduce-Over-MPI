@@ -675,8 +675,8 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         {
             // 测试是否和内存锁有关系
             size_t start = len / num_split * node_label;
-            memcpy(data + len + start, data + start, sizeof(DataType) * len / num_split);
-            lonely_request_index = handle_send(&(recv_ops.lonely_ops), data + len, len, num_split, node_label, lonely_requests);
+            memcpy(recv_buffer + start, data + start, sizeof(DataType) * len / num_split);
+            lonely_request_index = handle_send(&(recv_ops.lonely_ops), recv_buffer, len, num_split, node_label, lonely_requests);
             // end
             //lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
         }
