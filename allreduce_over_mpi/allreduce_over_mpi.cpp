@@ -676,12 +676,18 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             // 测试是否和内存锁有关系
             size_t start = len / num_split * node_label;
             memcpy(recv_buffer + start, data + start, sizeof(DataType) * len / num_split);
-            lonely_request_index = handle_send(&(recv_ops.lonely_ops), recv_buffer, len, num_split, node_label, lonely_requests);
             // end
             //lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
         }
         for (int i = stages.size() - 1; i >= 0; i--)
         {
+            if (num_lonely > 0)
+            {
+                if (i == stages.size() - 2 || stages.size() == 1)
+                {
+                    lonely_request_index = handle_send(&(recv_ops.lonely_ops), recv_buffer, len, num_split, node_label, lonely_requests);
+                }
+            }
             request_index = handle_send(&(recv_ops.ops[i]), data, len, num_split, node_label, requests);
             request_index += handle_recv(&(send_ops.ops[i]), data, len, num_split, node_label, true, requests + request_index);
             MPI_Waitall(request_index, requests, status);
