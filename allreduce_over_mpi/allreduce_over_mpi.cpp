@@ -685,6 +685,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             MPI_Barrier(MPI_COMM_WORLD);
             LOG(INFO) << node_label << " comes here.";
             delete[] lonely_requests;
+            LOG(INFO) << node_label << " free here.";
         }
     }
     else 
@@ -704,10 +705,12 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         MPI_Barrier(MPI_COMM_WORLD);
         LOG(INFO) << node_label << " comes here.";
         delete[] lonely_requests;
+        LOG(INFO) << node_label << " free here.";
     }
     LOG(INFO) << node_label << " comes here.";
     delete[] requests;
     delete[] status;
+    LOG(INFO) << node_label << " free here.";
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
