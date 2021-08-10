@@ -651,9 +651,6 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             if (lonely_request_index == 0 || i != stages.size() - 1)
             {
                 handle_reduce(&(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1);
-#ifdef SHOW_TIME
-                TIME_LOG_IF(node_label == 0 && i == stages.size() - 1, "node 0 ft gather finished");
-#endif SHOW_TIME
             }
             else
             {
@@ -666,6 +663,9 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             MPI_Waitall(request_index, requests, status);
             MPI_Barrier(sub_comm);
         }
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "(left) FT gather finished");
+#endif SHOW_TIME
         if (num_lonely > 0) MPI_Barrier(MPI_COMM_WORLD);
         //LOG_IF(WARNING, node_label == 0) << "gathering done";
 #ifdef SHOW_TIME
@@ -692,13 +692,13 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
             MPI_Barrier(sub_comm);
         }
 #ifdef SHOW_TIME
-                TIME_LOG_IF(node_label == 0, "node 0 ft broadcast finished");
+                TIME_LOG_IF(node_label == 0, "(left comm) FT broadcast finished");
 #endif SHOW_TIME
         if (num_lonely > 0)
         {
             MPI_Waitall(lonely_request_index, lonely_requests, status);
 #ifdef SHOW_TIME
-                TIME_LOG_IF(node_label == 0, "node 0 lonely broadcast finished");
+            TIME_LOG_IF(node_label == 0, "node 0 lonely broadcast finished");
 #endif SHOW_TIME
             MPI_Barrier(MPI_COMM_WORLD);
             delete[] lonely_requests;
@@ -712,7 +712,7 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
         lonely_request_index = handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
         MPI_Waitall(lonely_request_index, lonely_requests, status);
 #ifdef SHOW_TIME
-        TIME_LOG_IF(true, "lonely send finished");
+        TIME_LOG_IF(true, "(right) lonely send finished");
 #endif SHOW_TIME
         //LOG(WARNING) << "LONELY send done";
         MPI_Barrier(MPI_COMM_WORLD);
