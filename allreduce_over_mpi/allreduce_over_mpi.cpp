@@ -13,6 +13,13 @@
 typedef float DataType;
 const int INF = 0x3F3F3F3F;
 
+#define SHOW_TIME // 显示更多的时间调试信息
+#ifdef SHOW_TIME
+double _time_base;
+#define TIME_RESET() do {_time_base=MPI_Wtime();} while (false)
+#define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<" :: "<<note;} while (false)
+#endif
+
 // util
 template<typename T>
 void write_vector_to_file(std::vector<T> vec, std::string filename)
@@ -408,22 +415,15 @@ void reduce_sum(DataType **src, int num_blocks, size_t num_elements)
     }
 }
 
-// 单纯的发送, 可通用
-void handle_send(std::vector<Operation> *ops, DataType *data, size_t len, size_t num_split, size_t node_label)
+// 单纯的发送, 只负责安排工作, 不等待工作完成.
+size_t handle_send(std::vector<Operation> *ops, DataType *data, size_t len, size_t num_split, size_t node_label, MPI_Request request[])
 {
     CHECK_NOTNULL(ops);
     CHECK_NOTNULL(data);
-
+    CHECK_NOTNULL(request);
 
     size_t start;
-
-    // 总共要进行的通信的次数
-    const size_t comm_size = ops->size() * (*ops)[0].blocks.size();
-
-    // 用于 MPI_Waitall()
-    MPI_Request *request = new MPI_Request[comm_size];
     size_t request_index = 0;
-    MPI_Status *status = new MPI_Status[comm_size];
 
     int count = len / num_split;
 
@@ -439,11 +439,72 @@ void handle_send(std::vector<Operation> *ops, DataType *data, size_t len, size_t
             }
         }
     }
-    //LOG_IF(INFO, node_label == 4) << "START OF SEND";
-    MPI_Waitall(request_index, request, status);
-    delete[] request;
-    delete[] status;
-    //LOG_IF(INFO, node_label == 4) << "END OF SEND";
+    return request_index;
+}
+
+// 同上, 只负责安排工作, 不等待工作完成.
+// accordingly 参数的含义是, 如果为 true, 那么把数据块写到 buffer 中对应的位置去; 如果为 false, 那么直接平铺在 buffer 中.
+size_t handle_recv(std::vector<Operation> *ops, DataType *buffer, size_t len, size_t num_split, size_t node_label, bool accordingly, MPI_Request request[])
+{
+    CHECK_NOTNULL(ops);
+    CHECK_NOTNULL(buffer);
+
+    size_t start = 0;
+    size_t request_index = 0;
+
+    int count = len / num_split; // 单位数据块的大小
+
+    for (const auto &i : *ops)
+    {
+        if (LIKELY(node_label != i.peer))
+        {
+            for (const auto &j : i.blocks)
+            {
+                if (accordingly) 
+                {
+                    start = len / num_split * j;
+                }
+                MPI_Irecv(buffer + start, count, MPI_FLOAT, i.peer, 0, MPI_COMM_WORLD, &request[request_index++]); // 此处的tag暂时先打0
+                if (!accordingly)
+                {
+                    start += len / num_split;
+                }
+            }
+        }
+    }
+    return request_index;
+}
+
+// 负责进行加和, 然后放到指定的位置上去. 注意会自动包含自己的那块data.
+void handle_reduce(std::vector<size_t> *blocks, DataType *buffer, DataType *data, size_t len, size_t num_split, size_t num_peers, DataType *extra_buffer = nullptr, size_t extra_peers = 0)
+{
+    const int block_size = len / num_split;
+    const size_t peer_gap = blocks->size() * block_size;
+    DataType **src = new DataType*[num_peers + 2];
+    for (int i = 0; i < num_peers + 2; i++)
+    {
+        src[i] = nullptr;
+    }
+    for (auto i = blocks->begin(); i != blocks->end(); i++)
+    {
+        size_t start = len / num_split * (*i);
+        size_t src_index = 1;
+        src[0] = data + start;
+        start = (i - blocks->begin()) * block_size;
+        for (size_t j = 0; j < num_peers; j++)
+        {
+            src[src_index++] = buffer + start;
+            start += peer_gap;
+        }
+        start = (i - blocks->begin()) * block_size;
+        for (size_t j = 0; j < extra_peers; j++)
+        {
+            src[src_index++] = extra_buffer + start;
+            start += peer_gap;
+        }
+        reduce_sum(src, src_index, block_size);
+    }
+    delete[] src;
 }
 
 bool comm_only = false;
@@ -546,6 +607,10 @@ void handle_recv_overwrite(std::vector<Operation> *ops, DataType *data, size_t l
     MPI_Waitall(request_index, request, status);
     delete[] request;
     delete[] status;
+#ifdef SHOW_TIME
+    TIME_LOG_IF(node_label == 0 && accordingly == false, "Node 0 lonely recv done");
+#endif
+    
 }
 
 void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lonely, size_t node_label, std::vector<size_t> stages)
@@ -559,69 +624,112 @@ void tree_allreduce(DataType *data, size_t len, size_t num_nodes, size_t num_lon
     Recv_Ops recv_ops(num_nodes, num_lonely, node_label, stages);
     send_ops.generate_ops();
     recv_ops.generate_ops();
-    std::thread *lonely_thread;
     MPI_Comm sub_comm = MPI_COMM_WORLD;
+    const size_t MAX_COMM_SIZE = 2 * (num_split - 1) * (num_split);
+    size_t request_index = 0;
+    MPI_Request *requests = new MPI_Request[MAX_COMM_SIZE];
+    MPI_Status *status = new MPI_Status[MAX_COMM_SIZE];
+    size_t lonely_request_index = 0;
+    MPI_Request *lonely_requests;
+    int tmp;
+#ifdef SHOW_TIME
+    TIME_RESET();
+#endif
     if (node_label < num_split)
     {
         if (num_lonely > 0)
         {
-            MPI_Comm_split(MPI_COMM_WORLD, 0, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
-            lonely_thread = new std::thread(handle_recv_overwrite, &(recv_ops.lonely_ops), data + len, len, num_split, node_label, false);
+            lonely_requests = new MPI_Request[num_lonely << 1];
+            MPI_Comm_split(MPI_COMM_WORLD, 0, node_label, &sub_comm); // 这个 0 是 magic number, 用来标注本组的颜色.
+            lonely_request_index = handle_recv(&(recv_ops.lonely_ops), data + len, len, num_split, node_label, false, lonely_requests);
         }
         for (size_t i = 0; i != stages.size(); i++)
         {
-            std::thread send_thread(handle_send, &(send_ops.ops[i]), data, len, num_split, node_label);
-            std::thread recv_thread(handle_recv_gather, &(recv_ops.ops[i]), data, len, num_split, node_label);
-            send_thread.join();
-            recv_thread.join();
+            request_index = handle_send(&(send_ops.ops[i]), data, len, num_split, node_label, requests + request_index); //这里顺便重置了 index
+            tmp = handle_recv(&(recv_ops.ops[i]), recv_buffer, len, num_split, node_label, false, requests + request_index);
+            MPI_Waitall(tmp, requests + request_index, status);
+            if (lonely_request_index == 0 || i != stages.size() - 1)
+            {
+                handle_reduce(&(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1);
+            }
+            else
+            {
+                MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+                TIME_LOG_IF(node_label == 0, "node 0 lonely gather finished");
+#endif SHOW_TIME
+                handle_reduce(&(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1, data + len, num_lonely);
+            }
+            MPI_Waitall(request_index, requests, status);
             MPI_Barrier(sub_comm);
         }
-        // 处理孤立节点
-        if (num_lonely > 0)
-        {
-            lonely_thread->join();
-            DataType **src = new DataType*[MAX_NUM_BLOCKS];
-            src[0] = data + len / num_split * node_label;
-            //LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * node_label + 1);
-            //LOG_IF(WARNING, node_label == 0) << *(data + len / num_split * (num_split) + 1);
-            for (size_t i = 0; i < num_lonely; i++)
-            {
-                src[i + 1] = data + len / num_split * (num_split + i);
-            }
-            reduce_sum(src, num_lonely + 1, len / num_split);
-            MPI_Barrier(MPI_COMM_WORLD);
-        }
-        
-        if (num_lonely > 0)
-        {
-            lonely_thread = new std::thread(handle_send, &(recv_ops.lonely_ops), data, len, num_split, node_label);
-        }
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "(left) FT gather finished");
+#endif SHOW_TIME
+        if (num_lonely > 0) MPI_Barrier(MPI_COMM_WORLD);
         //LOG_IF(WARNING, node_label == 0) << "gathering done";
+#ifdef SHOW_TIME
+        TIME_RESET();
+#endif
+        if (num_lonely > 0)
+        {
+            // 测试是否和内存锁有关系
+            //size_t start = len / num_split * node_label;
+            //memcpy(recv_buffer + start, data + start, sizeof(DataType) * len / num_split);
+            //lonely_request_index = handle_send(&(recv_ops.lonely_ops), recv_buffer, len, num_split, node_label, lonely_requests);
+            // end
+            //lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
+        }
         for (int i = stages.size() - 1; i >= 0; i--)
         {
-            std::thread send_thread(handle_send, &(recv_ops.ops[i]), data, len, num_split, node_label);
-            std::thread recv_thread(handle_recv_overwrite, &(send_ops.ops[i]), data, len, num_split, node_label, true);
-            send_thread.join();
-            recv_thread.join();
+            if (i == 0 && num_lonely > 0)
+            {
+                lonely_request_index = handle_send(&(recv_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
+            }
+            request_index = handle_send(&(recv_ops.ops[i]), data, len, num_split, node_label, requests);
+            request_index += handle_recv(&(send_ops.ops[i]), data, len, num_split, node_label, true, requests + request_index);
+            MPI_Waitall(request_index, requests, status);
             MPI_Barrier(sub_comm);
         }
+#ifdef SHOW_TIME
+                TIME_LOG_IF(node_label == 0, "(left comm) FT broadcast finished");
+#endif SHOW_TIME
         if (num_lonely > 0)
         {
-            lonely_thread->join();
+            MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+            TIME_LOG_IF(node_label == 0, "node 0 lonely broadcast finished");
+#endif SHOW_TIME
             MPI_Barrier(MPI_COMM_WORLD);
+            delete[] lonely_requests;
         }
     }
     else 
     {
-        MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 12 是 magic number, 用来标注本组的颜色.
+        lonely_requests = new MPI_Request[num_split << 2];
+        MPI_Comm_split(MPI_COMM_WORLD, 1, node_label, &sub_comm); // 这个 1 是 magic number, 用来标注本组的颜色.
         //LOG(WARNING) << "LONELY send start";
-        handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label);
+        lonely_request_index = handle_send(&(send_ops.lonely_ops), data, len, num_split, node_label, lonely_requests);
+        MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+        TIME_LOG_IF(true, "(right) lonely send finished");
+#endif SHOW_TIME
         //LOG(WARNING) << "LONELY send done";
         MPI_Barrier(MPI_COMM_WORLD);
+#ifdef SHOW_TIME
+        TIME_RESET();
+#endif
         //LOG(WARNING) << "LONELY recv start";
-        handle_recv_overwrite(&(send_ops.lonely_ops), data, len, num_split, node_label, true);
+        lonely_request_index = handle_recv(&(send_ops.lonely_ops), data, len, num_split, node_label, true, lonely_requests);
+        MPI_Waitall(lonely_request_index, lonely_requests, status);
+#ifdef SHOW_TIME
+        TIME_LOG_IF(true, "lonely recv finished");
+#endif SHOW_TIME
         MPI_Barrier(MPI_COMM_WORLD);
+        delete[] lonely_requests;
     }
+    delete[] requests;
+    delete[] status;
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
@@ -633,15 +741,19 @@ void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_la
     const size_t right = (node_label == num_nodes - 1 ? 0 : node_label + 1);
     size_t block_send = node_label;
     size_t block_recv = left;
+    const size_t MAX_COMM_SIZE = 4;
+    size_t request_index = 0;
+    MPI_Request *requests = new MPI_Request[MAX_COMM_SIZE];
+    MPI_Status *status = new MPI_Status[MAX_COMM_SIZE];
     
     //LOG_IF(WARNING, node_label == 0) << "gathering start";
     for (size_t i = 0; i != num_nodes - 1; i++)
     {
         std::vector<Operation> send_ops = {Operation(right, block_send)};
         std::vector<Operation> recv_ops = {Operation(left, block_recv)};
-        std::thread send_thread(handle_send, &send_ops, data, len, num_nodes, node_label);
+        request_index = handle_send(&send_ops, data, len, num_nodes, node_label, requests);
         std::thread recv_thread(handle_recv_gather, &recv_ops, data, len, num_nodes, node_label);
-        send_thread.join();
+        MPI_Waitall(request_index, requests, status); // 这个地方暂时采用这种新旧混合的写法. 之后有空了再改吧.
         recv_thread.join();
         MPI_Barrier(MPI_COMM_WORLD);
         block_send = (block_send == 0 ? num_nodes - 1 : block_send - 1);
@@ -652,15 +764,17 @@ void ring_allreduce(DataType *data, size_t len, size_t num_nodes, size_t node_la
     {
         std::vector<Operation> send_ops = {Operation(right, block_send)};
         std::vector<Operation> recv_ops = {Operation(left, block_recv)};
-        std::thread send_thread(handle_send, &send_ops, data, len, num_nodes, node_label);
+        request_index = handle_send(&send_ops, data, len, num_nodes, node_label, requests);
         std::thread recv_thread(handle_recv_overwrite, &recv_ops, data, len, num_nodes, node_label, true);
-        send_thread.join();
+        MPI_Waitall(request_index, requests, status); // 这个地方暂时采用这种新旧混合的写法. 之后有空了再改吧.
         recv_thread.join();
         MPI_Barrier(MPI_COMM_WORLD);
         block_send = (block_send == 0 ? num_nodes - 1 : block_send - 1);
         block_recv = (block_recv == 0 ? num_nodes - 1 : block_recv - 1);
     }
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
+    delete[] requests;
+    delete[] status;
 }
 
 int main(int argc, char **argv)
@@ -670,15 +784,20 @@ int main(int argc, char **argv)
 
     // 命令行参数
     int repeat = 1;
-    std::vector<double> repeat_time;
     double sum_time = 0, min_time = INF;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = true;
 
+    // others
+    std::vector<double> repeat_time;
     int tmp;
+
+    // init glog
     FLAGS_colorlogtostderr = true;
     FLAGS_logtostderr = true;
     google::InitGoogleLogging(argv[0]);
+
+    // init mpi
     MPI_Init_thread(&argc,&argv, MPI_THREAD_MULTIPLE, &tmp);
     CHECK_EQ(tmp, MPI_THREAD_MULTIPLE) << "MPI_THREAD_MULTIPLE thread support required " <<  tmp;
     MPI_Comm_size(MPI_COMM_WORLD, &tmp);
@@ -687,8 +806,9 @@ int main(int argc, char **argv)
     node_label = tmp;
     LOG_IF(INFO, node_label == 0) << "glog initialized.";
     LOG(INFO) << "total " << total_peers << " and here's " << node_label;
-    if (node_label == 0) 
+    //if (node_label == 0) 
         google::InstallFailureSignalHandler();
+    // end init
 
     MPI_Barrier(MPI_COMM_WORLD);
     size_t data_len = 336e3;
