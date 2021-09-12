@@ -1,3 +1,5 @@
+//start of flextree mod
+#if defined(c_plusplus) || defined(__cplusplus)
 #include<iostream>
 
 int FT_enabled()
@@ -12,16 +14,16 @@ int FT_enabled()
 #include<string.h>
 #include<thread>
 #include "glog/logging.h"
-
 #ifndef OMPI_MPI_H
 #include<mpi.h>
+const int INF = 0x3F3F3F3F;
 #endif
 
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
 //typedef float DataType;
-const int INF = 0x3F3F3F3F;
+
 
 //#define SHOW_TIME // 显示更多的时间调试信息
 #ifdef SHOW_TIME
@@ -519,7 +521,20 @@ void handle_reduce(MPI_Datatype datatype, std::vector<size_t> *blocks, void *buf
             src[src_index++] = extra_buffer + start * type_size;
             start += peer_gap;
         }
-        switch (datatype) 
+        if (datatype == MPI_UINT8_T) reduce_sum((uint8_t**)src, src_index, block_size);
+        else if (datatype == MPI_INT8_T) reduce_sum((int8_t**)src, src_index, block_size);
+        else if (datatype == MPI_UINT16_T) reduce_sum((uint16_t**)src, src_index, block_size);
+        else if (datatype == MPI_INT16_T) reduce_sum((int16_t**)src, src_index, block_size);
+        else if (datatype == MPI_INT32_T) reduce_sum((int32_t**)src, src_index, block_size);
+        else if (datatype == MPI_INT64_T) reduce_sum((int64_t**)src, src_index, block_size);
+        else if (datatype == MPI_FLOAT) reduce_sum((float**)src, src_index, block_size);
+        else if (datatype == MPI_DOUBLE) reduce_sum((double**)src, src_index, block_size);
+        else if (datatype == MPI_C_BOOL) reduce_sum((bool**)src, src_index, block_size);
+        else 
+        {
+            std::cerr << "Type " << "(wtf..)" << " is not supported in MPI mode.";
+        }
+        /*switch (datatype) 
         {
             case MPI_UINT8_T:
                 reduce_sum((uint8_t**)src, src_index, block_size); break;
@@ -542,7 +557,7 @@ void handle_reduce(MPI_Datatype datatype, std::vector<size_t> *blocks, void *buf
                 reduce_sum((bool**)src, src_index, block_size); break;
             default:
                 LOG(FATAL) << "Type " << "(wtf..)" << " is not supported in MPI mode.";
-        }
+        }*/
     }
     delete[] src;
 }
@@ -673,8 +688,13 @@ void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data,
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
+#ifndef OMPI_MPI_H
 int MPI_Allreduce_FT(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+#else
+int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+#endif
 {
+    LOG(WARNING) << "FlexTree Allreduce called.";
     size_t node_label, num_nodes, num_lonely = 0;
     int tmp;
     MPI_Comm_size(comm, &tmp);
@@ -689,14 +709,14 @@ int MPI_Allreduce_FT(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
     {
         memcpy(recvbuf, sendbuf, count);
     }
-    LOG_IF(WARNING, node_label == 0) << "comes here ";
     tree_allreduce(datatype, op, comm, recvbuf, count, num_nodes, num_lonely, node_label, {num_nodes});
-    LOG_IF(WARNING, node_label == 0) << "comes here ";
 
     delete[] recv_buffer;
     return 0;
 }
 
+#ifndef OMPI_MPI_H
+#include "glog/logging.h"
 int main(int argc, char **argv)
 {
         // 当前节点的编号, 总结点数量, 孤立节点数量
@@ -793,3 +813,6 @@ int main(int argc, char **argv)
     google::ShutdownGoogleLogging();
     return 0;
 }
+#endif //end if of check whether in mpi.h
+#endif //end if of check c++
+//end of flextree mod
