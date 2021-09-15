@@ -1,8 +1,11 @@
 //start of flextree mod
+#ifndef FlexTree_MPI
+#define FlexTree_MPI
+
 #if defined(c_plusplus) || defined(__cplusplus)
 #include<iostream>
 
-int FT_enabled()
+static int FT_enabled()
 {
     std::cout << "FlexTree enabled";
     return 0;
@@ -13,7 +16,6 @@ int FT_enabled()
 #include<vector>
 #include<string.h>
 #include<thread>
-#include "glog/logging.h"
 #ifndef OMPI_MPI_H
 #include<mpi.h>
 const int INF = 0x3F3F3F3F;
@@ -31,18 +33,6 @@ double _time_base;
 #define TIME_RESET() do {_time_base=MPI_Wtime();} while (false)
 #define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<" :: "<<note;} while (false)
 #endif
-
-// util
-template<typename T>
-void write_vector_to_file(std::vector<T> vec, std::string filename)
-{
-    std::ofstream f(filename, std::ios::out);
-    for (auto &i : vec)
-    {
-        f << i << std::endl;
-    }
-    f.close();
-}
 
 // Op
 class Operation
@@ -96,18 +86,12 @@ public:
      */ 
     Operations(size_t _total_peers, size_t _num_lonely, size_t _node_label, std::vector<size_t> _stages): total_peers(_total_peers), node_label(_node_label), stages(_stages), num_lonely(_num_lonely), num_split(_total_peers - _num_lonely)
     {
-        CHECK_GT(_total_peers, 0);
-        CHECK_GE(_node_label, 0);
-        CHECK_LT(_node_label, _total_peers);
-        CHECK_GE(_num_lonely, 0);
-        CHECK_GT(num_split, 0);
+
         size_t pi = 1;
         for (const auto &i:_stages)
         {
-            CHECK_GT(i, 0);
             pi *= i;
         }
-        CHECK_EQ(pi + _num_lonely, _total_peers);
     }
     // 生成拓扑, 要求子类实现
     virtual void generate_ops() = 0;
@@ -223,9 +207,10 @@ public:
 
 const size_t MAX_NUM_BLOCKS = 20;
 template<class DataType> 
-void reduce_sum(DataType **src, int num_blocks, size_t num_elements)
+static void reduce_sum(DataType **src, int num_blocks, size_t num_elements)
 {
-    CHECK_LE(num_blocks, MAX_NUM_BLOCKS);
+    //std::cout << "reduce_sum called, ele size = " << sizeof(**src) << std::endl;
+    if (num_blocks <= 1) return;
 #define PARALLEL_THREAD 14
     DataType *dst = src[0];
     DataType *src0 = src[0];
@@ -423,17 +408,221 @@ void reduce_sum(DataType **src, int num_blocks, size_t num_elements)
         break;
     }
     default:
-        LOG(FATAL) << "Unknown num_blocks: " << num_blocks;
+        std::cerr << "Unknown num_blocks: " << num_blocks << std::endl;
+        break;
+    }
+}
+
+template<class DataType> 
+static void reduce_band(DataType **src, int num_blocks, size_t num_elements)
+{
+    //std::cout << "reduce_band called, ele size = " << sizeof(**src) << std::endl;
+    if (num_blocks <= 1) return;
+#define PARALLEL_THREAD 14
+    DataType *dst = src[0];
+    DataType *src0 = src[0];
+    DataType *src1 = src[1];
+    DataType *src2 = src[2];
+    DataType *src3 = src[3];
+    DataType *src4 = src[4];
+    DataType *src5 = src[5];
+    DataType *src6 = src[6];
+    DataType *src7 = src[7];
+    DataType *src8 = src[8];
+    DataType *src9 = src[9];
+    DataType *src10 = src[10];
+    DataType *src11 = src[11];
+    DataType *src12 = src[12];
+    DataType *src13 = src[13];
+    DataType *src14 = src[14];
+    DataType *src15 = src[15];
+    DataType *src16 = src[16];
+    DataType *src17 = src[17];
+    DataType *src18 = src[18];
+    DataType *src19 = src[19];
+
+    switch (num_blocks)
+    {
+    case 2:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i];
+        }
+        break;
+    }
+    case 3:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i];
+        }
+        break;
+    }
+    case 4:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i];
+        }
+        break;
+    }
+    case 5:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i];
+        }
+        break;
+    }
+    case 6:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i];
+        }
+        break;
+    }
+    case 7:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i];
+        }
+        break;
+    }
+    case 8:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i];
+        }
+        break;
+    }
+    case 9:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i];
+        }
+        break;
+    }
+    case 10:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i];
+        }
+        break;
+    }
+    case 11:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i];
+        }
+        break;
+    }
+    case 12:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i];
+        }
+        break;
+    }
+    case 13:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i];
+        }
+        break;
+    }
+    case 14:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i];
+        }
+        break;
+    }
+    case 15:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i] & src14[i];
+        }
+        break;
+    }
+    case 16:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i] & src14[i] & src15[i];
+        }
+        break;
+    }
+    case 17:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i] & src14[i] & src15[i] & src16[i];
+        }
+        break;
+    }
+    case 18:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i] & src14[i] & src15[i] & src16[i] & src17[i];
+        }
+        break;
+    }
+    case 19:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i] & src14[i] & src15[i] & src16[i] & src17[i] & src18[i];
+        }
+        break;
+    }
+    case 20:
+    {
+#pragma omp parallel for simd num_threads(PARALLEL_THREAD)
+        for (size_t i = 0; i < num_elements; ++i)
+        {
+            dst[i] = src0[i] & src1[i] & src2[i] & src3[i] & src4[i] & src5[i] & src6[i] & src7[i] & src8[i] & src9[i] & src10[i] & src11[i] & src12[i] & src13[i] & src14[i] & src15[i] & src16[i] & src17[i] & src18[i] & src19[i];
+        }
+        break;
+    }
+    default:
+        std::cerr << "Unknown num_blocks: " << num_blocks << std::endl;
         break;
     }
 }
 
 // 单纯的发送, 只负责安排工作, 不等待工作完成.
-size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, void *data, size_t len, size_t num_split, size_t node_label, MPI_Request request[])
+static size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, void *data, size_t len, size_t num_split, size_t node_label, MPI_Request request[])
 {
-    CHECK_NOTNULL(ops);
-    CHECK_NOTNULL(data);
-    CHECK_NOTNULL(request);
 
     size_t start;
     size_t request_index = 0;
@@ -450,6 +639,7 @@ size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> 
             {
                 start = len / num_split * j;
                 //LOG_IF(INFO, node_label == 4) << "##4 send " << j << " which is " << start << "+" << count << " to " << i.peer ;
+                std::cout << node_label << " send " << j << " which is " << start << "+" << count << " to " << i.peer << ", element size = " << type_size << std::endl;
                 MPI_Isend(data + start * type_size, count, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
             }
         }
@@ -459,10 +649,8 @@ size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> 
 
 // 同上, 只负责安排工作, 不等待工作完成.
 // accordingly 参数的含义是, 如果为 true, 那么把数据块写到 buffer 中对应的位置去; 如果为 false, 那么直接平铺在 buffer 中.
-size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, void *buffer, size_t len, size_t num_split, size_t node_label, bool accordingly, MPI_Request request[])
+static size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, void *buffer, size_t len, size_t num_split, size_t node_label, bool accordingly, MPI_Request request[])
 {
-    CHECK_NOTNULL(ops);
-    CHECK_NOTNULL(buffer);
 
     size_t start = 0;
     size_t request_index = 0;
@@ -493,7 +681,7 @@ size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> 
 }
 
 // 负责进行加和, 然后放到指定的位置上去. 注意会自动包含自己的那块data.
-void handle_reduce(MPI_Datatype datatype, std::vector<size_t> *blocks, void *buffer, void *data, size_t len, size_t num_split, size_t num_peers, void *extra_buffer = nullptr, size_t extra_peers = 0)
+static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> *blocks, void *buffer, void *data, size_t len, size_t num_split, size_t num_peers, void *extra_buffer = nullptr, size_t extra_peers = 0)
 {
     int type_size;
     MPI_Type_size(datatype, &type_size);
@@ -521,19 +709,57 @@ void handle_reduce(MPI_Datatype datatype, std::vector<size_t> *blocks, void *buf
             src[src_index++] = extra_buffer + start * type_size;
             start += peer_gap;
         }
-        if (datatype == MPI_UINT8_T) reduce_sum((uint8_t**)src, src_index, block_size);
-        else if (datatype == MPI_INT8_T) reduce_sum((int8_t**)src, src_index, block_size);
-        else if (datatype == MPI_UINT16_T) reduce_sum((uint16_t**)src, src_index, block_size);
-        else if (datatype == MPI_INT16_T) reduce_sum((int16_t**)src, src_index, block_size);
-        else if (datatype == MPI_INT32_T) reduce_sum((int32_t**)src, src_index, block_size);
-        else if (datatype == MPI_INT64_T) reduce_sum((int64_t**)src, src_index, block_size);
-        else if (datatype == MPI_FLOAT) reduce_sum((float**)src, src_index, block_size);
-        else if (datatype == MPI_DOUBLE) reduce_sum((double**)src, src_index, block_size);
-        else if (datatype == MPI_C_BOOL) reduce_sum((bool**)src, src_index, block_size);
+        if (op == MPI_SUM)
+        {
+            if (datatype == MPI_UINT8_T) reduce_sum((uint8_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT8_T) reduce_sum((int8_t**)src, src_index, block_size);
+            else if (datatype == MPI_UINT16_T) reduce_sum((uint16_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT16_T) reduce_sum((int16_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT32_T) reduce_sum((int32_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT64_T) reduce_sum((int64_t**)src, src_index, block_size);
+            else if (datatype == MPI_FLOAT) reduce_sum((float**)src, src_index, block_size);
+            else if (datatype == MPI_DOUBLE) reduce_sum((double**)src, src_index, block_size);
+            else if (datatype == MPI_C_BOOL) reduce_sum((bool**)src, src_index, block_size);
+            else if (datatype == MPI_LONG_LONG_INT) reduce_sum((long long int**)src, src_index, block_size);
+            else if (datatype == MPI_LONG_LONG) reduce_sum((long long**)src, src_index, block_size);
+            else 
+            {
+                char name[20];
+                int name_len;
+                MPI_Type_get_name(datatype, name, &name_len);
+                name[name_len] = '\0';
+                std::string s = name;
+                std::cerr << "Type " << s << " is not supported in MPI mode." << std::endl;
+                exit(0);
+            }
+        }
+        else if (op == MPI_BAND)
+        {
+            if (datatype == MPI_UINT8_T) reduce_band((uint8_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT8_T) reduce_band((int8_t**)src, src_index, block_size);
+            else if (datatype == MPI_UINT16_T) reduce_band((uint16_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT16_T) reduce_band((int16_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT32_T) reduce_band((int32_t**)src, src_index, block_size);
+            else if (datatype == MPI_INT64_T) reduce_band((int64_t**)src, src_index, block_size);
+            else if (datatype == MPI_LONG_LONG_INT) reduce_band((long long int**)src, src_index, block_size);
+            else if (datatype == MPI_LONG_LONG) reduce_band((long long**)src, src_index, block_size);
+            else 
+            {
+                char name[20];
+                int name_len;
+                MPI_Type_get_name(datatype, name, &name_len);
+                name[name_len] = '\0';
+                std::string s = name;
+                std::cerr << "Type " << s << " is not supported in MPI mode." << std::endl;
+                exit(0);
+            }
+        }
         else 
         {
-            std::cerr << "Type " << "(wtf..)" << " is not supported in MPI mode.";
+            std::cerr << "Unsupported op " << op << std::endl;
+            exit(0);
         }
+
         /*switch (datatype) 
         {
             case MPI_UINT8_T:
@@ -562,14 +788,14 @@ void handle_reduce(MPI_Datatype datatype, std::vector<size_t> *blocks, void *buf
     delete[] src;
 }
 
-bool comm_only = false;
-void *recv_buffer = nullptr; //必须初始化
+static bool comm_only = false;
+static void *recv_buffer = nullptr; //必须初始化
 
-void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data, size_t len, size_t num_nodes, size_t num_lonely, size_t node_label, std::vector<size_t> stages)
+static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data, size_t len, size_t num_nodes, size_t num_lonely, size_t node_label, std::vector<size_t> stages)
 {
-    CHECK_NOTNULL(data);
-    CHECK_EQ(0, len % (num_nodes - num_lonely)) << "data length should be an integral multiple of the total bumber of nodes";
-
+    #ifdef FT_DEBUF
+    std::cout << "FT DEBUG: inside treeallre: op " << op << "; len = " << len << "; total = " << num_nodes << "; datatype = " << datatype << std::endl;
+    #endif
     int type_size;
     MPI_Type_size(datatype, &type_size);
 
@@ -602,10 +828,16 @@ void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data,
         {
             request_index = handle_send(comm, datatype, &(send_ops.ops[i]), data, len, num_split, node_label, requests + request_index); //这里顺便重置了 index
             tmp = handle_recv(comm, datatype, &(recv_ops.ops[i]), recv_buffer, len, num_split, node_label, false, requests + request_index);
+#ifdef FT_DEBUF
+            std::cout << "FT DEBUG: start to send/recv" << std::endl;
+#endif
             MPI_Waitall(tmp, requests + request_index, status);
+#ifdef FT_DEBUF
+            std::cout << "FT DEBUG: complete send/recv" << std::endl;
+#endif
             if (lonely_request_index == 0 || i != stages.size() - 1)
             {
-                handle_reduce(datatype, &(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1);
+                handle_reduce(datatype, op, &(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1);
             }
             else
             {
@@ -613,7 +845,7 @@ void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data,
 #ifdef SHOW_TIME
                 TIME_LOG_IF(node_label == 0, "node 0 lonely gather finished");
 #endif SHOW_TIME
-                handle_reduce(datatype, &(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1, data + len * type_size, num_lonely);
+                handle_reduce(datatype, op, &(recv_ops.ops[i][0].blocks), recv_buffer, data, len, num_split, recv_ops.ops[i].size() - 1, data + len * type_size, num_lonely);
             }
             MPI_Waitall(request_index, requests, status);
             MPI_Barrier(sub_comm);
@@ -625,6 +857,9 @@ void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data,
         //LOG_IF(WARNING, node_label == 0) << "gathering done";
 #ifdef SHOW_TIME
         TIME_RESET();
+#endif
+#ifdef FT_DEBUF
+        std::cout << "FT DEBUG: complete reduce" << std::endl;
 #endif
         if (num_lonely > 0)
         {
@@ -685,38 +920,65 @@ void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data,
     }
     delete[] requests;
     delete[] status;
+#ifdef FT_DEBUF
+    std::cout << "FT DEBUG: complete allreduce" << std::endl;
+#endif
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
 #ifndef OMPI_MPI_H
 int MPI_Allreduce_FT(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 #else
-int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 #endif
 {
-    LOG(WARNING) << "FlexTree Allreduce called.";
-    size_t node_label, num_nodes, num_lonely = 0;
+#ifdef FT_DEBUG
+    std::cout << "FlexTree AR called" << std::endl;
+#endif
+    size_t node_label, num_nodes, num_lonely = 0, type_size;
     int tmp;
     MPI_Comm_size(comm, &tmp);
     num_nodes = tmp;
     MPI_Comm_rank(comm, &tmp);
     node_label = tmp;
     MPI_Type_size(datatype, &tmp);
-    recv_buffer = (void*)(new char[(count * tmp)<<1]);
-
+    type_size = tmp;
+    recv_buffer = (void*)(new char[(count * type_size)<<1]);
+    int count_aligned = (count + num_nodes - 1) / num_nodes * num_nodes;
+    void *recv_buffer_aligned = (void*)(new char[(count_aligned * type_size) << 1]);
+    //std::cout << count_aligned << std::endl;
     // MPI_IN_PLACE
     if (sendbuf != MPI_IN_PLACE)
     {
-        memcpy(recvbuf, sendbuf, count);
+        memcpy(recvbuf, sendbuf, count * type_size);
     }
-    tree_allreduce(datatype, op, comm, recvbuf, count, num_nodes, num_lonely, node_label, {num_nodes});
+
+    memcpy(recv_buffer_aligned, recvbuf, count * type_size);
+
+    //tree_allreduce(datatype, op, comm, recvbuf, count, num_nodes, num_lonely, node_label, {num_nodes});
+    //if (num_nodes > 1)
+        tree_allreduce(datatype, op, comm, recv_buffer_aligned, count_aligned, num_nodes, num_lonely, node_label, {num_nodes});
+
+    memcpy(recvbuf, recv_buffer_aligned, count * type_size);
 
     delete[] recv_buffer;
     return 0;
 }
 
 #ifndef OMPI_MPI_H
-#include "glog/logging.h"
+
+// util
+template<typename T>
+void write_vector_to_file(std::vector<T> vec, std::string filename)
+{
+    std::ofstream f(filename, std::ios::out);
+    for (auto &i : vec)
+    {
+        f << i << std::endl;
+    }
+    f.close();
+}
+
 int main(int argc, char **argv)
 {
         // 当前节点的编号, 总结点数量, 孤立节点数量
@@ -732,22 +994,12 @@ int main(int argc, char **argv)
     std::vector<double> repeat_time;
     int tmp;
 
-    // init glog
-    FLAGS_colorlogtostderr = true;
-    FLAGS_logtostderr = true;
-    google::InitGoogleLogging(argv[0]);
-
     // init mpi
     MPI_Init_thread(&argc,&argv, MPI_THREAD_MULTIPLE, &tmp);
-    CHECK_EQ(tmp, MPI_THREAD_MULTIPLE) << "MPI_THREAD_MULTIPLE thread support required " <<  tmp;
     MPI_Comm_size(MPI_COMM_WORLD, &tmp);
     total_peers = tmp;
     MPI_Comm_rank(MPI_COMM_WORLD, &tmp);
     node_label = tmp;
-    LOG_IF(INFO, node_label == 0) << "glog initialized.";
-    LOG(INFO) << "total " << total_peers << " and here's " << node_label;
-    if (node_label == 0) 
-        google::InstallFailureSignalHandler();
     // end init
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -762,21 +1014,17 @@ int main(int argc, char **argv)
     }
     auto recv_buffer =(void*)(new char[data_len<<4]);
     // 准备就绪
-    LOG_IF(INFO, node_label == 0) << "READY";
     {
         for (auto i = 0; i < repeat; i++)
         {
             MPI_Barrier(MPI_COMM_WORLD);
-            LOG_IF(WARNING, node_label == 0) << "comes here";
             auto time1 = MPI_Wtime();
             MPI_Allreduce_FT(data, recv_buffer, data_len, MPI_INT32_T, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
-            LOG_IF(WARNING, node_label == 0) << "comes here";
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
             min_time = std::min(time2 - time1, min_time);
             memcpy(data, recv_buffer, data_len * sizeof(float));
-            LOG_IF(WARNING, node_label == 0) << "repeat " << i << " finished"; 
         }
     }
 
@@ -809,10 +1057,10 @@ int main(int argc, char **argv)
         write_vector_to_file(repeat_time, filename);
     }
 
-    LOG_IF(WARNING, node_label == 0) << "DONE, average time: " << sum_time / repeat << ", min time: " << min_time << std::endl;
-    google::ShutdownGoogleLogging();
     return 0;
 }
 #endif //end if of check whether in mpi.h
 #endif //end if of check c++
+
+#endif
 //end of flextree mod
