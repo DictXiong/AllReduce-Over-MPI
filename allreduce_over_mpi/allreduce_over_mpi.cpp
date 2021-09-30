@@ -18,6 +18,7 @@ static int FT_enabled()
 #include<thread>
 #ifndef OMPI_MPI_H
 #include<mpi.h>
+#include<glog/logging.h>
 const int INF = 0x3F3F3F3F;
 #endif
 
@@ -68,6 +69,7 @@ public:
 };
 
 // lonely 的意思是: 被树孤立的. 在 ar 过程中, lonely 节点的数据会不按照 stages 来进行, 而是与树的 ar 过程同步并行.
+// 为什么不在构造时直接使用 ft_ctx: 因为 ft_ctx 是与 mpi 强耦合的一个东西, 但是 operations 以及拓扑的生成应当只和所需要的这三个参数有关系, 不要和 mpi 扯上关系.
 class Operations
 {
 public:
@@ -235,31 +237,31 @@ public:
 
 const size_t MAX_NUM_BLOCKS = 20;
 template<class DataType> 
-static void reduce_sum(DataType **src, DataType *dst, int num_blocks, size_t num_elements)
+static void reduce_sum(const DataType **src, DataType *dst, int num_blocks, size_t num_elements)
 {
     //std::cout << "reduce_sum called, ele size = " << sizeof(**src) << std::endl;
     if (num_blocks <= 1) return;
 #define PARALLEL_THREAD 14
-    DataType *src0 = src[0];
-    DataType *src1 = src[1];
-    DataType *src2 = src[2];
-    DataType *src3 = src[3];
-    DataType *src4 = src[4];
-    DataType *src5 = src[5];
-    DataType *src6 = src[6];
-    DataType *src7 = src[7];
-    DataType *src8 = src[8];
-    DataType *src9 = src[9];
-    DataType *src10 = src[10];
-    DataType *src11 = src[11];
-    DataType *src12 = src[12];
-    DataType *src13 = src[13];
-    DataType *src14 = src[14];
-    DataType *src15 = src[15];
-    DataType *src16 = src[16];
-    DataType *src17 = src[17];
-    DataType *src18 = src[18];
-    DataType *src19 = src[19];
+    const DataType *src0 = src[0];
+    const DataType *src1 = src[1];
+    const DataType *src2 = src[2];
+    const DataType *src3 = src[3];
+    const DataType *src4 = src[4];
+    const DataType *src5 = src[5];
+    const DataType *src6 = src[6];
+    const DataType *src7 = src[7];
+    const DataType *src8 = src[8];
+    const DataType *src9 = src[9];
+    const DataType *src10 = src[10];
+    const DataType *src11 = src[11];
+    const DataType *src12 = src[12];
+    const DataType *src13 = src[13];
+    const DataType *src14 = src[14];
+    const DataType *src15 = src[15];
+    const DataType *src16 = src[16];
+    const DataType *src17 = src[17];
+    const DataType *src18 = src[18];
+    const DataType *src19 = src[19];
 
     switch (num_blocks)
     {
@@ -441,31 +443,31 @@ static void reduce_sum(DataType **src, DataType *dst, int num_blocks, size_t num
 }
 
 template<class DataType> 
-static void reduce_band(DataType **src, DataType *dst, int num_blocks, size_t num_elements)
+static void reduce_band(const DataType **src, DataType *dst, int num_blocks, size_t num_elements)
 {
     //std::cout << "reduce_band called, ele size = " << sizeof(**src) << std::endl;
     if (num_blocks <= 1) return;
 #define PARALLEL_THREAD 14
-    DataType *src0 = src[0];
-    DataType *src1 = src[1];
-    DataType *src2 = src[2];
-    DataType *src3 = src[3];
-    DataType *src4 = src[4];
-    DataType *src5 = src[5];
-    DataType *src6 = src[6];
-    DataType *src7 = src[7];
-    DataType *src8 = src[8];
-    DataType *src9 = src[9];
-    DataType *src10 = src[10];
-    DataType *src11 = src[11];
-    DataType *src12 = src[12];
-    DataType *src13 = src[13];
-    DataType *src14 = src[14];
-    DataType *src15 = src[15];
-    DataType *src16 = src[16];
-    DataType *src17 = src[17];
-    DataType *src18 = src[18];
-    DataType *src19 = src[19];
+    const DataType *src0 = src[0];
+    const DataType *src1 = src[1];
+    const DataType *src2 = src[2];
+    const DataType *src3 = src[3];
+    const DataType *src4 = src[4];
+    const DataType *src5 = src[5];
+    const DataType *src6 = src[6];
+    const DataType *src7 = src[7];
+    const DataType *src8 = src[8];
+    const DataType *src9 = src[9];
+    const DataType *src10 = src[10];
+    const DataType *src11 = src[11];
+    const DataType *src12 = src[12];
+    const DataType *src13 = src[13];
+    const DataType *src14 = src[14];
+    const DataType *src15 = src[15];
+    const DataType *src16 = src[16];
+    const DataType *src17 = src[17];
+    const DataType *src18 = src[18];
+    const DataType *src19 = src[19];
 
     switch (num_blocks)
     {
@@ -647,7 +649,7 @@ static void reduce_band(DataType **src, DataType *dst, int num_blocks, size_t nu
 }
 
 // 单纯的发送, 只负责安排工作, 不等待工作完成.
-static size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, void *data, const FlexTree_Context &ft_ctx, MPI_Request request[])
+static size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, const void *data, const FlexTree_Context &ft_ctx, MPI_Request request[])
 {
 
     size_t start;
@@ -661,13 +663,15 @@ static size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Oper
             {
                 start = ft_ctx.split_size * j;
                 //LOG_IF(INFO, node_label == 4) << "##4 send " << j << " which is " << start << "+" << count << " to " << i.peer ;
-                //std::cout << node_label << " send " << j << " which is " << start << "+" << count << " to " << i.peer << ", element size = " << type_size << std::endl;
+                
                 if (UNLIKELY(j == ft_ctx.num_split - 1 && ft_ctx.data_size != ft_ctx.data_size_aligned))
                 {
+                    std::cout << ft_ctx.node_label << " send " << j << " which is " << start << "+" << ft_ctx.last_split_size << " to " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
                     MPI_Isend(data + start * ft_ctx.type_size, ft_ctx.last_split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
                 }
                 else 
                 {
+                    std::cout << ft_ctx.node_label << " send " << j << " which is " << start << "+" << ft_ctx.split_size << " to " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
                     MPI_Isend(data + start * ft_ctx.type_size, ft_ctx.split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
                 }
             }
@@ -696,10 +700,12 @@ static size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Oper
                 }
                 if (UNLIKELY(j == ft_ctx.num_split - 1 && ft_ctx.data_size != ft_ctx.data_size_aligned))
                 {
+                    std::cout << ft_ctx.node_label << " recv " << j << " which will be placed to " << start << "+" << ft_ctx.last_split_size << " from " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
                     MPI_Irecv(buffer + start * ft_ctx.type_size, ft_ctx.last_split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
                 }
                 else
                 {
+                    std::cout << ft_ctx.node_label << " recv " << j << " which will be placed to " << start << "+" << ft_ctx.split_size << " from " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
                     MPI_Irecv(buffer + start * ft_ctx.type_size, ft_ctx.split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
                 }
                 
@@ -714,10 +720,17 @@ static size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Oper
 }
 
 // 负责进行加和, 然后放到指定的位置上去. 注意会自动包含自己的那块data.
-static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> *blocks, void *buffer, void *data, void *dst, const FlexTree_Context &ft_ctx, size_t num_peers, void *extra_buffer = nullptr, size_t extra_peers = 0)
+// 这里的 dest 是一块和 data 大小/结构相同的一块内存. 进行 reduce 的时候, 会把结果对应地放进 dest 去. 注意 dest 不可以是 null.
+static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> *blocks, void *buffer, const void *data, void *dest, const FlexTree_Context &ft_ctx, size_t num_peers, void *extra_buffer = nullptr, size_t extra_peers = 0)
 {
+    if (dest == nullptr)
+    {
+        std::cout << "I can't reduce to null. Aborted." << std::endl;
+        exit(0);
+    }
     const size_t peer_gap = blocks->size() * ft_ctx.split_size;
-    void **src = (void**)(new char*[ft_ctx.num_peers + 2]);
+    const void **src = (const void**)(new char*[num_peers + 2]);
+    void *dst;
     for (int i = 0; i < num_peers + 2; i++)
     {
         src[i] = nullptr;
@@ -727,14 +740,8 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
         size_t start = ft_ctx.split_size * (*i);
         size_t src_index = 1;
         src[0] = data + start * ft_ctx.type_size;
-        if (dst == nullptr)
-        {
-            dst = src[0];
-        }
-        else
-        {
-            dst = dst + start * ft_ctx.type_size;
-        }
+        dst = dest + start * ft_ctx.type_size;
+        
         start = (i - blocks->begin()) * ft_ctx.split_size;
         for (size_t j = 0; j < num_peers; j++)
         {
@@ -748,19 +755,20 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
             start += peer_gap;
         }
         size_t split_size = ((*i) == ft_ctx.num_split - 1) ? ft_ctx.last_split_size : ft_ctx.split_size;
+        std::cout << ft_ctx.node_label << " reduce " << *i << " which size is " << split_size << ", element size = " << ft_ctx.type_size << std::endl;
         if (op == MPI_SUM)
         {
-            if (datatype == MPI_UINT8_T) reduce_sum((uint8_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT8_T) reduce_sum((int8_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_UINT16_T) reduce_sum((uint16_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT16_T) reduce_sum((int16_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT32_T) reduce_sum((int32_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT64_T) reduce_sum((int64_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_FLOAT) reduce_sum((float**)src, dst, src_index, split_size);
-            else if (datatype == MPI_DOUBLE) reduce_sum((double**)src, dst, src_index, split_size);
-            else if (datatype == MPI_C_BOOL) reduce_sum((bool**)src, dst, src_index, split_size);
-            else if (datatype == MPI_LONG_LONG_INT) reduce_sum((long long int**)src, dst, src_index, split_size);
-            else if (datatype == MPI_LONG_LONG) reduce_sum((long long**)src, dst, src_index, split_size);
+            if (datatype == MPI_UINT8_T) reduce_sum((const uint8_t**)src, (uint8_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT8_T) reduce_sum((const int8_t**)src, (int8_t*)dst, src_index, split_size);
+            else if (datatype == MPI_UINT16_T) reduce_sum((const uint16_t**)src, (uint16_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT16_T) reduce_sum((const int16_t**)src, (int16_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT32_T) reduce_sum((const int32_t**)src, (int32_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT64_T) reduce_sum((const int64_t**)src, (int64_t*)dst, src_index, split_size);
+            else if (datatype == MPI_FLOAT) reduce_sum((const float**)src, (float*)dst, src_index, split_size);
+            else if (datatype == MPI_DOUBLE) reduce_sum((const double**)src, (double*)dst, src_index, split_size);
+            else if (datatype == MPI_C_BOOL) reduce_sum((const bool**)src, (bool*)dst, src_index, split_size);
+            else if (datatype == MPI_LONG_LONG_INT) reduce_sum((const long long int**)src, (long long int*)dst, src_index, split_size);
+            else if (datatype == MPI_LONG_LONG) reduce_sum((const long long**)src, (long long*)dst, src_index, split_size);
             else 
             {
                 char name[20];
@@ -774,14 +782,14 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
         }
         else if (op == MPI_BAND)
         {
-            if (datatype == MPI_UINT8_T) reduce_band((uint8_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT8_T) reduce_band((int8_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_UINT16_T) reduce_band((uint16_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT16_T) reduce_band((int16_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT32_T) reduce_band((int32_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_INT64_T) reduce_band((int64_t**)src, dst, src_index, split_size);
-            else if (datatype == MPI_LONG_LONG_INT) reduce_band((long long int**)src, dst, src_index, split_size);
-            else if (datatype == MPI_LONG_LONG) reduce_band((long long**)src, dst, src_index, split_size);
+            if (datatype == MPI_UINT8_T) reduce_band((const uint8_t**)src, (uint8_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT8_T) reduce_band((const int8_t**)src, (int8_t*)dst, src_index, split_size);
+            else if (datatype == MPI_UINT16_T) reduce_band((const uint16_t**)src, (uint16_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT16_T) reduce_band((const int16_t**)src, (int16_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT32_T) reduce_band((const int32_t**)src, (int32_t*)dst, src_index, split_size);
+            else if (datatype == MPI_INT64_T) reduce_band((const int64_t**)src, (int64_t*)dst, src_index, split_size);
+            else if (datatype == MPI_LONG_LONG_INT) reduce_band((const long long int**)src, (long long int*)dst, src_index, split_size);
+            else if (datatype == MPI_LONG_LONG) reduce_band((const long long**)src, (long long*)dst, src_index, split_size);
             else 
             {
                 char name[20];
@@ -805,18 +813,19 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
 static bool comm_only = false;
 static void *recv_buffer = nullptr; //必须初始化
 
-static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void *data, void *dst, const FlexTree_Context &ft_ctx, std::vector<size_t> stages)
+// 如果需要原地 ar, 那么将 data 置为 nullptr.
+static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, const void *data, void *dst, const FlexTree_Context &ft_ctx, std::vector<size_t> stages)
 {
     #ifdef FT_DEBUF
     std::cout << "FT DEBUG: inside treeallre: op " << op << "; len = " << len << "; total = " << num_nodes << "; datatype = " << datatype << std::endl;
     #endif
-    if (dst == nullptr)
+    if (data == nullptr)
     {
-        dst = data;
+        data = dst;
     }
     //LOG_IF(WARNING, node_label == 0) << "gathering start";
-    Send_Ops send_ops(num_nodes, num_lonely, node_label, stages);
-    Recv_Ops recv_ops(num_nodes, num_lonely, node_label, stages);
+    Send_Ops send_ops(ft_ctx.num_nodes, ft_ctx.num_lonely, ft_ctx.node_label, stages);
+    Recv_Ops recv_ops(ft_ctx.num_nodes, ft_ctx.num_lonely, ft_ctx.node_label, stages);
     send_ops.generate_ops();
     recv_ops.generate_ops();
     MPI_Comm sub_comm = comm;
@@ -880,9 +889,9 @@ static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void
 #ifdef SHOW_TIME
         TIME_RESET();
 #endif
-#ifdef FT_DEBUF
-        std::cout << "FT DEBUG: complete reduce" << std::endl;
-#endif
+//#ifdef FT_DEBUF
+        std::cout << "-------- FT DEBUG: complete reduce --------" << std::endl;
+//#endif
         if (ft_ctx.has_lonely)
         {
             // 测试是否和内存锁有关系
@@ -942,12 +951,13 @@ static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, void
     }
     delete[] requests;
     delete[] status;
-#ifdef FT_DEBUF
-    std::cout << "FT DEBUG: complete allreduce" << std::endl;
-#endif
+//#ifdef FT_DEBUF
+    std::cout << "-------- FT DEBUG: complete allreduce --------" << std::endl;
+//#endif
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
 }
 
+// NOTE: 可别把这个buffer给私自delete了
 static void* flextree_register_the_buffer(size_t _size)
 {
     static void* buffer;
@@ -958,6 +968,7 @@ static void* flextree_register_the_buffer(size_t _size)
         {
             delete[] buffer;
         }
+        std::cout << "registered a buffer of " << _size << std::endl;
         buffer = (void*)(new char[_size]);
         size = _size;
     }
@@ -970,37 +981,34 @@ int MPI_Allreduce_FT(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
 static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 #endif
 {
-#ifdef FT_DEBUG
+//#ifdef FT_DEBUG
     std::cout << "FlexTree AR called" << std::endl;
-#endif
+//#endif
     const FlexTree_Context ft_ctx(comm, datatype, count);
 
     if (ft_ctx.num_nodes <= 1)
     {
         if (sendbuf != MPI_IN_PLACE)
         {
-            memcpy(recvbuf, sendbuf, count * type_size);
+            memcpy(recvbuf, sendbuf, count * ft_ctx.type_size);
         }
         return 0;
     }
 
-    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned);
+    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * 2);
+    //recv_buffer = (void*)(new char[ft_ctx.data_size_aligned * 2]);
     
-    void *recv_buffer_aligned = (void*)(new char[(count_aligned * type_size) << 1]);
     // MPI_IN_PLACE
-    if (sendbuf != MPI_IN_PLACE)
+    if (sendbuf == MPI_IN_PLACE)
     {
-        memcpy(recvbuf, sendbuf, count * type_size);
+        tree_allreduce(datatype, op, comm, nullptr, recvbuf, ft_ctx, {ft_ctx.num_nodes});
+    }
+    else 
+    {
+        tree_allreduce(datatype, op, comm, sendbuf, recvbuf, ft_ctx, {ft_ctx.num_nodes});
     }
 
-    memcpy(recv_buffer_aligned, recvbuf, count * type_size);
-
-    tree_allreduce(datatype, op, comm, recv_buffer_aligned, ft_ctx, {num_nodes});
-
-    memcpy(recvbuf, recv_buffer_aligned, count * type_size);
-
-    delete[] recv_buffer;
-    delete[] recv_buffer_aligned;
+    std::cout << "FlexTree AR finished" << std::endl;
     return 0;
 }
 
@@ -1041,8 +1049,16 @@ int main(int argc, char **argv)
     node_label = tmp;
     // end init
 
+    // init glog
+    FLAGS_colorlogtostderr = true;
+    FLAGS_logtostderr = true;
+    google::InitGoogleLogging(argv[0]);
+    //if (node_label == 0) 
+        google::InstallFailureSignalHandler();
+    // end init
+
     MPI_Barrier(MPI_COMM_WORLD);
-    size_t data_len = 336e4;
+    size_t data_len = 35;
     std::vector<size_t> topo;
         
     // 初始化 data 和 buffer
