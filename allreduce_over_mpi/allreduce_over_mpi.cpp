@@ -86,7 +86,7 @@ public:
      * @param _stages 一个向量, 记录了 AllReduce 树自下而上每一层的宽度. 注意积 + {@code _num_lonely} 应当等于 {@code _total_peers}.
      * @param _num_lonely 孤立节点的数量
      */ 
-    Operations(size_t _total_peers, size_t _num_lonely, size_t _node_label, std::vector<size_t> _stages): total_peers(_total_peers), node_label(_node_label), stages(_stages), num_lonely(_num_lonely), num_split(_total_peers - _num_lonely)
+    Operations(const size_t &_total_peers, const size_t &_num_lonely, const size_t &_node_label, const std::vector<size_t> &_stages): total_peers(_total_peers), node_label(_node_label), stages(_stages), num_lonely(_num_lonely), num_split(_total_peers - _num_lonely)
     {
 
         size_t pi = 1;
@@ -212,7 +212,7 @@ class FlexTree_Context
 public:
     size_t num_nodes, node_label, num_lonely, data_size, num_split, split_size, data_size_aligned, type_size, last_split_size;
     bool has_lonely;
-    FlexTree_Context(MPI_Comm _comm, MPI_Datatype _datatype, size_t _count, size_t _num_lonely = 0)
+    FlexTree_Context(const MPI_Comm &_comm, const MPI_Datatype &_datatype, const size_t &_count, const size_t &_num_lonely = 0)
     {
         int tmp;
         MPI_Comm_size(_comm, &tmp);
@@ -229,15 +229,15 @@ public:
         last_split_size = split_size - (data_size_aligned - data_size);
         has_lonely = (num_lonely > 0);
     }
-    void show_context()
+    void show_context() const
     {
-        std::cout << "num_nodes=" << num_nodes << ", node_label=" << node_label << ", num_lonely=" << num_lonely << ", data_size=" << data_size << ", num_split=" << num_split << ", split_size=" << split_size << ", data_size_aligned=" << data_size_aligned << ", type_size=" << type_size << ", has_lonely=" << has_lonely << std::endl;
+        std::cout << "num_nodes=" << num_nodes << ", node_label=" << node_label << ", num_lonely=" << num_lonely << ", data_size=" << data_size << ", num_split=" << num_split << ", split_size=" << split_size << ", last_split_size=" << last_split_size << ", data_size_aligned=" << data_size_aligned << ", type_size=" << type_size << ", has_lonely=" << has_lonely << std::endl;
     }
 };
 
 const size_t MAX_NUM_BLOCKS = 20;
 template<class DataType> 
-static void reduce_sum(const DataType **src, DataType *dst, int num_blocks, size_t num_elements)
+static void reduce_sum(const DataType **src, DataType *dst, const int &num_blocks, const size_t &num_elements)
 {
     //std::cout << "reduce_sum called, ele size = " << sizeof(**src) << std::endl;
     if (num_blocks <= 1) return;
@@ -443,7 +443,7 @@ static void reduce_sum(const DataType **src, DataType *dst, int num_blocks, size
 }
 
 template<class DataType> 
-static void reduce_band(const DataType **src, DataType *dst, int num_blocks, size_t num_elements)
+static void reduce_band(const DataType **src, DataType *dst, const int &num_blocks, const size_t &num_elements)
 {
     //std::cout << "reduce_band called, ele size = " << sizeof(**src) << std::endl;
     if (num_blocks <= 1) return;
@@ -649,7 +649,7 @@ static void reduce_band(const DataType **src, DataType *dst, int num_blocks, siz
 }
 
 // 单纯的发送, 只负责安排工作, 不等待工作完成.
-static size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, const void *data, const FlexTree_Context &ft_ctx, MPI_Request request[])
+static size_t handle_send(const MPI_Comm &comm, const MPI_Datatype &datatype, const std::vector<Operation> *ops, const void *data, const FlexTree_Context &ft_ctx, MPI_Request request[])
 {
 
     size_t start;
@@ -682,7 +682,7 @@ static size_t handle_send(MPI_Comm comm, MPI_Datatype datatype, std::vector<Oper
 
 // 同上, 只负责安排工作, 不等待工作完成.
 // accordingly 参数的含义是, 如果为 true, 那么把数据块写到 buffer 中对应的位置去; 如果为 false, 那么直接平铺在 buffer 中.
-static size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Operation> *ops, void *buffer, const FlexTree_Context &ft_ctx, bool accordingly, MPI_Request request[])
+static size_t handle_recv(const MPI_Comm &comm, const MPI_Datatype &datatype, const std::vector<Operation> *ops, void *buffer, const FlexTree_Context &ft_ctx, const bool &accordingly, MPI_Request request[])
 {
 
     size_t start = 0;
@@ -721,7 +721,7 @@ static size_t handle_recv(MPI_Comm comm, MPI_Datatype datatype, std::vector<Oper
 
 // 负责进行加和, 然后放到指定的位置上去. 注意会自动包含自己的那块data.
 // 这里的 dest 是一块和 data 大小/结构相同的一块内存. 进行 reduce 的时候, 会把结果对应地放进 dest 去. 注意 dest 不可以是 null.
-static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> *blocks, void *buffer, const void *data, void *dest, const FlexTree_Context &ft_ctx, size_t num_peers, void *extra_buffer = nullptr, size_t extra_peers = 0)
+static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const std::vector<size_t> *blocks, void *buffer, const void *data, void *dest, const FlexTree_Context &ft_ctx, const size_t &num_peers, void *extra_buffer = nullptr, const size_t &extra_peers = 0)
 {
     if (dest == nullptr)
     {
@@ -729,7 +729,7 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
         exit(0);
     }
     const size_t peer_gap = blocks->size() * ft_ctx.split_size;
-    const void **src = (const void**)(new char*[num_peers + 2]);
+    const void **src = (const void**)(new char*[num_peers + extra_peers + 10]);
     void *dst;
     for (int i = 0; i < num_peers + 2; i++)
     {
@@ -741,11 +741,13 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
         size_t src_index = 1;
         src[0] = data + start * ft_ctx.type_size;
         dst = dest + start * ft_ctx.type_size;
-        
+        size_t split_size = ((*i) == ft_ctx.num_split - 1) ? ft_ctx.last_split_size : ft_ctx.split_size;
+        std::cout << ft_ctx.node_label << " reduce " << *i << " which size is " << split_size << ", element size = " << ft_ctx.type_size << std::endl;
         start = (i - blocks->begin()) * ft_ctx.split_size;
         for (size_t j = 0; j < num_peers; j++)
         {
             src[src_index++] = buffer + start * ft_ctx.type_size;
+            std::cout << "  --" << ft_ctx.node_label << " will reduce data at " << start << std::endl; 
             start += peer_gap;
         }
         start = (i - blocks->begin()) * ft_ctx.split_size;
@@ -754,8 +756,7 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
             src[src_index++] = extra_buffer + start * ft_ctx.type_size;
             start += peer_gap;
         }
-        size_t split_size = ((*i) == ft_ctx.num_split - 1) ? ft_ctx.last_split_size : ft_ctx.split_size;
-        std::cout << ft_ctx.node_label << " reduce " << *i << " which size is " << split_size << ", element size = " << ft_ctx.type_size << std::endl;
+        
         if (op == MPI_SUM)
         {
             if (datatype == MPI_UINT8_T) reduce_sum((const uint8_t**)src, (uint8_t*)dst, src_index, split_size);
@@ -808,13 +809,14 @@ static void handle_reduce(MPI_Datatype datatype, MPI_Op op, std::vector<size_t> 
         }
     }
     delete[] src;
+    src = nullptr;
 }
 
 static bool comm_only = false;
 static void *recv_buffer = nullptr; //必须初始化
 
 // 如果需要原地 ar, 那么将 data 置为 nullptr.
-static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, const void *data, void *dst, const FlexTree_Context &ft_ctx, std::vector<size_t> stages)
+static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const MPI_Comm &comm, const void *data, void *dst, const FlexTree_Context &ft_ctx, const std::vector<size_t> &stages)
 {
     #ifdef FT_DEBUF
     std::cout << "FT DEBUG: inside treeallre: op " << op << "; len = " << len << "; total = " << num_nodes << "; datatype = " << datatype << std::endl;
@@ -843,9 +845,10 @@ static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, cons
     {
         if (ft_ctx.has_lonely)
         {
-            lonely_requests = new MPI_Request[ft_ctx.num_lonely << 1];
-            MPI_Comm_split(comm, 0, ft_ctx.node_label, &sub_comm); // 这个 0 是 magic number, 用来标注本组的颜色.
-            // 如果要用, 则必须修改. lonely_request_index = handle_recv(comm, datatype, &(recv_ops.lonely_ops), data + len * type_size, ft_ctx, false, lonely_requests);
+            // 如果要用, 则必须修改.
+            //lonely_requests = new MPI_Request[ft_ctx.num_lonely << 1];
+            //MPI_Comm_split(comm, 0, ft_ctx.node_label, &sub_comm); // 这个 0 是 magic number, 用来标注本组的颜色.
+            // lonely_request_index = handle_recv(comm, datatype, &(recv_ops.lonely_ops), data + len * type_size, ft_ctx, false, lonely_requests);
         }
         for (size_t i = 0; i != stages.size(); i++)
         {
@@ -923,6 +926,7 @@ static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, cons
 #endif SHOW_TIME
             MPI_Barrier(comm);
             delete[] lonely_requests;
+            lonely_requests = nullptr;
         }
     }
     else 
@@ -948,13 +952,17 @@ static void tree_allreduce(MPI_Datatype datatype, MPI_Op op, MPI_Comm comm, cons
 #endif SHOW_TIME
         MPI_Barrier(comm);
         delete[] lonely_requests;
+        lonely_requests = nullptr;
     }
     delete[] requests;
     delete[] status;
+    requests = nullptr;
+    status = nullptr;
 //#ifdef FT_DEBUF
     std::cout << "-------- FT DEBUG: complete allreduce --------" << std::endl;
 //#endif
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
+    std::cout << "WHY HERE: " << ((int32_t*)dst)[9] << " " << ((int32_t*)dst)[12] << std::endl;
 }
 
 // NOTE: 可别把这个buffer给私自delete了
@@ -967,6 +975,7 @@ static void* flextree_register_the_buffer(size_t _size)
         if (size != 0)
         {
             delete[] buffer;
+            buffer = nullptr;
         }
         std::cout << "registered a buffer of " << _size << std::endl;
         buffer = (void*)(new char[_size]);
@@ -985,6 +994,7 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
     std::cout << "FlexTree AR called" << std::endl;
 //#endif
     const FlexTree_Context ft_ctx(comm, datatype, count);
+    if (ft_ctx.node_label == ft_ctx.num_nodes - 2) ft_ctx.show_context();
 
     if (ft_ctx.num_nodes <= 1)
     {
@@ -995,7 +1005,7 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
         return 0;
     }
 
-    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * 4);
+    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * 1);
     //recv_buffer = (void*)(new char[ft_ctx.data_size_aligned * 2]);
     
     // MPI_IN_PLACE
@@ -1062,24 +1072,24 @@ int main(int argc, char **argv)
     std::vector<size_t> topo;
         
     // 初始化 data 和 buffer
-    int32_t *data = new int32_t[data_len * 2];
+    int32_t *data = new int32_t[data_len];
     for (size_t i = 0; i != data_len; i++)
     {
         data[i] = i / 1.0;
     }
-    auto recv_buffer =(void*)(new char[data_len<<4]);
+    auto recvbuf =(void*)(new int32_t[data_len]);
     // 准备就绪
     {
         for (auto i = 0; i < repeat; i++)
         {
             MPI_Barrier(MPI_COMM_WORLD);
             auto time1 = MPI_Wtime();
-            MPI_Allreduce_FT(data, recv_buffer, data_len, MPI_INT32_T, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce_FT(data, recvbuf, data_len, MPI_INT32_T, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
             min_time = std::min(time2 - time1, min_time);
-            memcpy(data, recv_buffer, data_len * sizeof(float));
+            memcpy(data, recvbuf, data_len * sizeof(float));
         }
     }
 
