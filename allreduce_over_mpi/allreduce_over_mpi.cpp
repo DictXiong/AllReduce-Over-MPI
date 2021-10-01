@@ -995,7 +995,7 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
         return 0;
     }
 
-    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * 2);
+    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * 4);
     //recv_buffer = (void*)(new char[ft_ctx.data_size_aligned * 2]);
     
     // MPI_IN_PLACE
