@@ -16,6 +16,7 @@ static int FT_enabled()
 #include<vector>
 #include<string.h>
 #include<thread>
+#include<stdlib.h>
 #ifndef OMPI_MPI_H
 #include<mpi.h>
 #include<glog/logging.h>
@@ -25,8 +26,7 @@ const int INF = 0x3F3F3F3F;
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
-//typedef float DataType;
-
+#define FT_DEBUG
 
 //#define SHOW_TIME // 显示更多的时间调试信息
 #ifdef SHOW_TIME
@@ -210,7 +210,7 @@ public:
 class FlexTree_Context
 {
 public:
-    size_t num_nodes, node_label, num_lonely, data_size, num_split, split_size, data_size_aligned, type_size, last_split_size;
+    size_t num_nodes, node_label, num_lonely, data_size, num_split, split_size, data_size_aligned, type_size;
     bool has_lonely;
     FlexTree_Context(const MPI_Comm &_comm, const MPI_Datatype &_datatype, const size_t &_count, const size_t &_num_lonely = 0)
     {
@@ -226,12 +226,13 @@ public:
         data_size_aligned = split_size * num_nodes;
         MPI_Type_size(_datatype, &tmp);
         type_size = tmp;
-        last_split_size = split_size - (data_size_aligned - data_size);
+        //last_split_size = split_size - (data_size_aligned - data_size);
+        // 为什么不能用 last_split_size 呢? 是因为最后一块大小可能为 0, 而且有可能倒数好几块都是 0!!! 为了对齐, 付出的代价可能是好几块. 比如说 10 个节点同步一个大小为 1 的数据块, 当然十块有九块都是空了.
         has_lonely = (num_lonely > 0);
     }
     void show_context() const
     {
-        std::cout << "num_nodes=" << num_nodes << ", node_label=" << node_label << ", num_lonely=" << num_lonely << ", data_size=" << data_size << ", num_split=" << num_split << ", split_size=" << split_size << ", last_split_size=" << last_split_size << ", data_size_aligned=" << data_size_aligned << ", type_size=" << type_size << ", has_lonely=" << has_lonely << std::endl;
+        std::cout << "num_nodes=" << num_nodes << ", node_label=" << node_label << ", num_lonely=" << num_lonely << ", data_size=" << data_size << ", num_split=" << num_split << ", split_size=" << split_size << ", data_size_aligned=" << data_size_aligned << ", type_size=" << type_size << ", has_lonely=" << has_lonely << std::endl;
     }
 };
 
@@ -239,7 +240,9 @@ const size_t MAX_NUM_BLOCKS = 20;
 template<class DataType> 
 static void reduce_sum(const DataType **src, DataType *dst, const int &num_blocks, const size_t &num_elements)
 {
+#ifdef FT_DEBUG
     //std::cout << "reduce_sum called, ele size = " << sizeof(**src) << std::endl;
+#endif
     if (num_blocks <= 1) return;
 #define PARALLEL_THREAD 14
     const DataType *src0 = src[0];
@@ -445,7 +448,9 @@ static void reduce_sum(const DataType **src, DataType *dst, const int &num_block
 template<class DataType> 
 static void reduce_band(const DataType **src, DataType *dst, const int &num_blocks, const size_t &num_elements)
 {
+#ifdef FT_DEBUG
     //std::cout << "reduce_band called, ele size = " << sizeof(**src) << std::endl;
+#endif
     if (num_blocks <= 1) return;
 #define PARALLEL_THREAD 14
     const DataType *src0 = src[0];
@@ -664,14 +669,30 @@ static size_t handle_send(const MPI_Comm &comm, const MPI_Datatype &datatype, co
                 start = ft_ctx.split_size * j;
                 //LOG_IF(INFO, node_label == 4) << "##4 send " << j << " which is " << start << "+" << count << " to " << i.peer ;
                 
-                if (UNLIKELY(j == ft_ctx.num_split - 1 && ft_ctx.data_size != ft_ctx.data_size_aligned))
+                // 如果当前块的末尾计算值大于实际的总数据块大小 (超出)
+                if (UNLIKELY(start + ft_ctx.split_size > ft_ctx.data_size))
                 {
-                    std::cout << ft_ctx.node_label << " send " << j << " which is " << start << "+" << ft_ctx.last_split_size << " to " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
-                    MPI_Isend(data + start * ft_ctx.type_size, ft_ctx.last_split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
+                    // 如果当前块的起始位置没有超过实际总数据块大小
+                    if (start < ft_ctx.data_size)
+                    {
+                        MPI_Isend(data + start * ft_ctx.type_size, ft_ctx.data_size - start, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
+#ifdef FT_DEBUG
+                        std::cout << ft_ctx.node_label << " send " << j << " which is " << start << "+" << ft_ctx.data_size - start << " to " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
+#endif
+                    }
+                    // 否则根本不发送 (因为块为空)
+                    else
+                    {
+#ifdef FT_DEBUG
+                        std::cout << ft_ctx.node_label << " will not send " << j << " which starts from " << start << " to " << i.peer << " because it's empty." << std::endl;
+#endif
+                    }
                 }
                 else 
                 {
+#ifdef FT_DEBUG
                     std::cout << ft_ctx.node_label << " send " << j << " which is " << start << "+" << ft_ctx.split_size << " to " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
+#endif
                     MPI_Isend(data + start * ft_ctx.type_size, ft_ctx.split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
                 }
             }
@@ -694,18 +715,36 @@ static size_t handle_recv(const MPI_Comm &comm, const MPI_Datatype &datatype, co
         {
             for (const auto &j : i.blocks)
             {
+                size_t split_accord_start = ft_ctx.split_size * j;
                 if (accordingly) 
                 {
-                    start = ft_ctx.split_size * j;
+                    start = split_accord_start;
                 }
-                if (UNLIKELY(j == ft_ctx.num_split - 1 && ft_ctx.data_size != ft_ctx.data_size_aligned))
+
+                // 如果当前块的末尾计算值大于实际的总数据块大小 (超出)
+                if (UNLIKELY(split_accord_start + ft_ctx.split_size > ft_ctx.data_size))
                 {
-                    std::cout << ft_ctx.node_label << " recv " << j << " which will be placed to " << start << "+" << ft_ctx.last_split_size << " from " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
-                    MPI_Irecv(buffer + start * ft_ctx.type_size, ft_ctx.last_split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
+                    // 如果当前块的起始位置没有超过实际总数据块大小
+                    if (split_accord_start < ft_ctx.data_size)
+                    {
+#ifdef FT_DEBUG
+                        std::cout << ft_ctx.node_label << " recv " << j << " which will be placed to " << start << "+" << ft_ctx.data_size - split_accord_start << " from " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
+#endif
+                        MPI_Irecv(buffer + start * ft_ctx.type_size, ft_ctx.data_size - split_accord_start, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
+                    }
+                    // 否则根本不接收 (因为块为空)
+                    else
+                    {
+#ifdef FT_DEBUG
+                        std::cout << ft_ctx.node_label << " will not recv " << j << " from " << i.peer << " because it's empty" << std::endl;
+#endif
+                    }
                 }
                 else
                 {
+#ifdef FT_DEBUG
                     std::cout << ft_ctx.node_label << " recv " << j << " which will be placed to " << start << "+" << ft_ctx.split_size << " from " << i.peer << ", element size = " << ft_ctx.type_size << std::endl;
+#endif
                     MPI_Irecv(buffer + start * ft_ctx.type_size, ft_ctx.split_size, datatype, i.peer, 0, comm, &request[request_index++]); // 此处的tag暂时先打0
                 }
                 
@@ -725,7 +764,7 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
 {
     if (dest == nullptr)
     {
-        std::cout << "I can't reduce to null. Aborted." << std::endl;
+        std::cerr << "I can't reduce to null. Aborted." << std::endl;
         exit(0);
     }
     const size_t peer_gap = blocks->size() * ft_ctx.split_size;
@@ -741,13 +780,33 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
         size_t src_index = 1;
         src[0] = data + start * ft_ctx.type_size;
         dst = dest + start * ft_ctx.type_size;
-        size_t split_size = ((*i) == ft_ctx.num_split - 1) ? ft_ctx.last_split_size : ft_ctx.split_size;
+        size_t split_size = ft_ctx.split_size;
+        // 如果当前块的理论结尾位置超过了实际的块大小
+        if (UNLIKELY(start + ft_ctx.split_size > ft_ctx.data_size))
+        {
+            // 如果当前块的起始位置没有超过实际总数据块大小
+            if (start < ft_ctx.data_size)
+            {
+                split_size = ft_ctx.data_size - start;
+            }
+            else
+            {
+#ifdef FT_DEBUG
+                std::cout << ft_ctx.node_label << " will not reduce " << *i << " because it's empty." << std::endl;
+#endif
+                continue; // 当前块实际大小为零, 直接溜了.
+            }
+        }
+#ifdef FT_DEBUG
         std::cout << ft_ctx.node_label << " reduce " << *i << " which size is " << split_size << ", element size = " << ft_ctx.type_size << std::endl;
+#endif
         start = (i - blocks->begin()) * ft_ctx.split_size;
         for (size_t j = 0; j < num_peers; j++)
         {
             src[src_index++] = buffer + start * ft_ctx.type_size;
-            std::cout << "  --" << ft_ctx.node_label << " will reduce data at " << start << std::endl; 
+#ifdef FT_DEBUG
+            std::cout << "  --" << ft_ctx.node_label << " will reduce data at " << start << std::endl;
+#endif
             start += peer_gap;
         }
         start = (i - blocks->begin()) * ft_ctx.split_size;
@@ -812,15 +871,63 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
     src = nullptr;
 }
 
+// 从环境变量获取每一层宽度
+std::vector<size_t> get_stages(const size_t &num_nodes)
+{
+    std::string FT_TOPO; 
+    auto FT_TOPO_raw = getenv("FT_TOPO");
+    std::vector<size_t> ans;
+    std::stringstream ss;
+    size_t pi = 1;
+    int tmp;
+    if (FT_TOPO_raw != nullptr)
+    {
+        FT_TOPO = FT_TOPO_raw;
+    }
+    if (FT_TOPO.empty())
+    {
+        ans = {num_nodes};
+    }
+    else 
+    {
+        for (char &i : FT_TOPO)
+        {
+            if (i == ',') i = ' ';
+        }
+        ss << FT_TOPO;
+        while(!ss.eof())
+        {
+            ss >> tmp;
+            ans.push_back(tmp);
+            pi *= tmp;
+        }
+        if (pi != num_nodes)
+        {
+            std::cerr << "invalid FT_TOPO " << FT_TOPO << std::endl;
+            exit(0);
+        }
+    }
+#ifdef FT_DEBUG
+    std::cout << "FlexTree topo is ";
+    for (auto i:ans)
+    {
+        std::cout << i << " ";
+    }
+    std::cout << std::endl;
+#endif
+    return ans;
+}
+
 static bool comm_only = false;
 static void *recv_buffer = nullptr; //必须初始化
 
 // 如果需要原地 ar, 那么将 data 置为 nullptr.
 static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const MPI_Comm &comm, const void *data, void *dst, const FlexTree_Context &ft_ctx, const std::vector<size_t> &stages)
 {
-    #ifdef FT_DEBUF
-    std::cout << "FT DEBUG: inside treeallre: op " << op << "; len = " << len << "; total = " << num_nodes << "; datatype = " << datatype << std::endl;
-    #endif
+#ifdef FT_DEBUG
+    //std::cout << "FT DEBUG: inside treeallre: op " << op << "; len = " << len << "; total = " << num_nodes << "; datatype = " << datatype << std::endl;
+    std::cout << "LOOK HERE (TMP): " << stages.size();
+#endif
     if (data == nullptr)
     {
         data = dst;
@@ -830,6 +937,7 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
     Recv_Ops recv_ops(ft_ctx.num_nodes, ft_ctx.num_lonely, ft_ctx.node_label, stages);
     send_ops.generate_ops();
     recv_ops.generate_ops();
+    if (ft_ctx.node_label == 0) send_ops.print_ops();
     MPI_Comm sub_comm = comm;
     const size_t MAX_COMM_SIZE = 2 * (ft_ctx.num_split - 1) * (ft_ctx.num_split);
     size_t request_index = 0;
@@ -862,16 +970,24 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
                 request_index = handle_send(comm, datatype, &(send_ops.ops[i]), dst, ft_ctx, requests + request_index); //这里顺便重置了 index
             }
             tmp = handle_recv(comm, datatype, &(recv_ops.ops[i]), recv_buffer, ft_ctx, false, requests + request_index);
-#ifdef FT_DEBUF
-            std::cout << "FT DEBUG: start to send/recv" << std::endl;
+#ifdef FT_DEBUG
+            //std::cout << "FT DEBUG: start to send/recv" << std::endl;
 #endif
             MPI_Waitall(tmp, requests + request_index, status);
-#ifdef FT_DEBUF
-            std::cout << "FT DEBUG: complete send/recv" << std::endl;
+#ifdef FT_DEBUG
+            //std::cout << "FT DEBUG: complete send/recv" << std::endl;
 #endif
             if (lonely_request_index == 0 || i != stages.size() - 1)
             {
-                handle_reduce(datatype, op, &(recv_ops.ops[i][0].blocks), recv_buffer, data, dst, ft_ctx, recv_ops.ops[i].size() - 1);
+                // 这里判断的原因和上面一样
+                if (i == 0)
+                {
+                    handle_reduce(datatype, op, &(recv_ops.ops[i][0].blocks), recv_buffer, data, dst, ft_ctx, recv_ops.ops[i].size() - 1);
+                }
+                else
+                {
+                    handle_reduce(datatype, op, &(recv_ops.ops[i][0].blocks), recv_buffer, dst, dst, ft_ctx, recv_ops.ops[i].size() - 1);
+                }
             }
             else
             {
@@ -892,9 +1008,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
 #ifdef SHOW_TIME
         TIME_RESET();
 #endif
-//#ifdef FT_DEBUF
+#ifdef FT_DEBUG
         std::cout << "-------- FT DEBUG: complete reduce --------" << std::endl;
-//#endif
+#endif
         if (ft_ctx.has_lonely)
         {
             // 测试是否和内存锁有关系
@@ -958,11 +1074,13 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
     delete[] status;
     requests = nullptr;
     status = nullptr;
-//#ifdef FT_DEBUF
+#ifdef FT_DEBUG
     std::cout << "-------- FT DEBUG: complete allreduce --------" << std::endl;
-//#endif
+#endif
     //LOG_IF(WARNING, node_label == 0) << "broadcast done";
+#ifdef FT_DEBUG
     std::cout << "WHY HERE: " << ((int32_t*)dst)[9] << " " << ((int32_t*)dst)[12] << std::endl;
+#endif
 }
 
 // NOTE: 可别把这个buffer给私自delete了
@@ -977,7 +1095,9 @@ static void* flextree_register_the_buffer(size_t _size)
             delete[] buffer;
             buffer = nullptr;
         }
+#ifdef FT_DEBUG
         std::cout << "registered a buffer of " << _size << std::endl;
+#endif
         buffer = (void*)(new char[_size]);
         size = _size;
     }
@@ -990,11 +1110,13 @@ int MPI_Allreduce_FT(const void *sendbuf, void *recvbuf, int count, MPI_Datatype
 static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 #endif
 {
-//#ifdef FT_DEBUG
+#ifdef FT_DEBUG
     std::cout << "FlexTree AR called" << std::endl;
-//#endif
+#endif
     const FlexTree_Context ft_ctx(comm, datatype, count);
+#ifdef FT_DEBUG
     if (ft_ctx.node_label == ft_ctx.num_nodes - 2) ft_ctx.show_context();
+#endif
 
     if (ft_ctx.num_nodes <= 1)
     {
@@ -1005,20 +1127,21 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
         return 0;
     }
 
-    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * 1);
-    //recv_buffer = (void*)(new char[ft_ctx.data_size_aligned * 2]);
+    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * ft_ctx.type_size);
+    auto stages = get_stages(ft_ctx.num_nodes);
     
     // MPI_IN_PLACE
     if (sendbuf == MPI_IN_PLACE)
     {
-        tree_allreduce(datatype, op, comm, nullptr, recvbuf, ft_ctx, {ft_ctx.num_nodes});
+        tree_allreduce(datatype, op, comm, nullptr, recvbuf, ft_ctx, stages);
     }
     else 
     {
-        tree_allreduce(datatype, op, comm, sendbuf, recvbuf, ft_ctx, {ft_ctx.num_nodes});
+        tree_allreduce(datatype, op, comm, sendbuf, recvbuf, ft_ctx, stages);
     }
-
+#ifdef FT_DEBUG
     std::cout << "FlexTree AR finished" << std::endl;
+#endif
     return 0;
 }
 
@@ -1066,6 +1189,7 @@ int main(int argc, char **argv)
     //if (node_label == 0) 
         google::InstallFailureSignalHandler();
     // end init
+    LOG(INFO) << "Hi here's " << node_label;
 
     MPI_Barrier(MPI_COMM_WORLD);
     size_t data_len = 35;
