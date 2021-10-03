@@ -26,7 +26,7 @@ const int INF = 0x3F3F3F3F;
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
-#define FT_DEBUG
+//#define FT_DEBUG
 
 //#define SHOW_TIME // 显示更多的时间调试信息
 #ifdef SHOW_TIME
@@ -872,7 +872,7 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
 }
 
 // 从环境变量获取每一层宽度
-std::vector<size_t> get_stages(const size_t &num_nodes)
+static std::vector<size_t> get_stages(const size_t &num_nodes)
 {
     std::string FT_TOPO; 
     auto FT_TOPO_raw = getenv("FT_TOPO");
@@ -937,7 +937,6 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
     Recv_Ops recv_ops(ft_ctx.num_nodes, ft_ctx.num_lonely, ft_ctx.node_label, stages);
     send_ops.generate_ops();
     recv_ops.generate_ops();
-    if (ft_ctx.node_label == 0) send_ops.print_ops();
     MPI_Comm sub_comm = comm;
     const size_t MAX_COMM_SIZE = 2 * (ft_ctx.num_split - 1) * (ft_ctx.num_split);
     size_t request_index = 0;
