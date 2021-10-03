@@ -765,7 +765,7 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
     if (dest == nullptr)
     {
         std::cerr << "I can't reduce to null. Aborted." << std::endl;
-        exit(0);
+        exit(1);
     }
     const size_t peer_gap = blocks->size() * ft_ctx.split_size;
     const void **src = (const void**)(new char*[num_peers + extra_peers + 10]);
@@ -837,7 +837,7 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
                 name[name_len] = '\0';
                 std::string s = name;
                 std::cerr << "Type " << s << " is not supported in MPI mode." << std::endl;
-                exit(0);
+                exit(1);
             }
         }
         else if (op == MPI_BAND)
@@ -858,13 +858,13 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
                 name[name_len] = '\0';
                 std::string s = name;
                 std::cerr << "Type " << s << " is not supported in MPI mode." << std::endl;
-                exit(0);
+                exit(1);
             }
         }
         else 
         {
             std::cerr << "Unsupported op " << op << std::endl;
-            exit(0);
+            exit(1);
         }
     }
     delete[] src;
@@ -904,7 +904,7 @@ static std::vector<size_t> get_stages(const size_t &num_nodes)
         if (pi != num_nodes)
         {
             std::cerr << "invalid FT_TOPO " << FT_TOPO << std::endl;
-            exit(0);
+            exit(1);
         }
     }
 #ifdef FT_DEBUG
@@ -1144,111 +1144,6 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
     return 0;
 }
 
-#ifndef OMPI_MPI_H
-
-// util
-template<typename T>
-void write_vector_to_file(std::vector<T> vec, std::string filename)
-{
-    std::ofstream f(filename, std::ios::out);
-    for (auto &i : vec)
-    {
-        f << i << std::endl;
-    }
-    f.close();
-}
-
-int main(int argc, char **argv)
-{
-        // 当前节点的编号, 总结点数量, 孤立节点数量
-    size_t node_label, total_peers, num_lonely = 0; 
-
-    // 命令行参数
-    int repeat = 1;
-    double sum_time = 0, min_time = INF;
-    int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
-    bool to_file = false;
-
-    // others
-    std::vector<double> repeat_time;
-    int tmp;
-
-    // init mpi
-    MPI_Init_thread(&argc,&argv, MPI_THREAD_MULTIPLE, &tmp);
-    MPI_Comm_size(MPI_COMM_WORLD, &tmp);
-    total_peers = tmp;
-    MPI_Comm_rank(MPI_COMM_WORLD, &tmp);
-    node_label = tmp;
-    // end init
-
-    // init glog
-    FLAGS_colorlogtostderr = true;
-    FLAGS_logtostderr = true;
-    google::InitGoogleLogging(argv[0]);
-    //if (node_label == 0) 
-        google::InstallFailureSignalHandler();
-    // end init
-    LOG(INFO) << "Hi here's " << node_label;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    size_t data_len = 35;
-    std::vector<size_t> topo;
-        
-    // 初始化 data 和 buffer
-    int32_t *data = new int32_t[data_len];
-    for (size_t i = 0; i != data_len; i++)
-    {
-        data[i] = i / 1.0;
-    }
-    auto recvbuf =(void*)(new int32_t[data_len]);
-    // 准备就绪
-    {
-        for (auto i = 0; i < repeat; i++)
-        {
-            MPI_Barrier(MPI_COMM_WORLD);
-            auto time1 = MPI_Wtime();
-            MPI_Allreduce_FT(data, recvbuf, data_len, MPI_INT32_T, MPI_SUM, MPI_COMM_WORLD);
-            auto time2 = MPI_Wtime();
-            repeat_time.push_back(time2 - time1);
-            sum_time += time2 - time1;
-            min_time = std::min(time2 - time1, min_time);
-            memcpy(data, recvbuf, data_len * sizeof(float));
-        }
-    }
-
-    for (int i = 0; i != total_peers; i++)
-    {
-        MPI_Barrier(MPI_COMM_WORLD);
-        if (i == node_label)
-        {
-            std::cout << "CHECK " << node_label << ": ";
-            for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
-            std::cout << std::endl;
-        }
-    }
-    
-    MPI_Finalize();
-
-    // 写入文件
-    if (node_label == 0 && to_file)
-    {
-        std::stringstream ss;
-        ss << total_peers << "." << data_len << ".";
-        for (auto i : topo)
-        {
-            ss << i << "-";
-        }
-        ss << (comm_only ? ".comm_test." : ".ar_test.");
-        ss << time(NULL) << ".txt";
-        std::string filename;
-        ss >> filename;
-        write_vector_to_file(repeat_time, filename);
-    }
-
-    return 0;
-}
-#endif //end if of check whether in mpi.h
 #endif //end if of check c++
-
 #endif
 //end of flextree mod
