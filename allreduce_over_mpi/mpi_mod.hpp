@@ -877,7 +877,6 @@ static std::vector<size_t> get_stages(const size_t &num_nodes)
     std::string FT_TOPO; 
     auto FT_TOPO_raw = getenv("FT_TOPO");
     std::vector<size_t> ans;
-    std::stringstream ss;
     size_t pi = 1;
     int tmp;
     if (FT_TOPO_raw != nullptr)
@@ -894,7 +893,7 @@ static std::vector<size_t> get_stages(const size_t &num_nodes)
         {
             if (i == ',') i = ' ';
         }
-        ss << FT_TOPO;
+        std::istringstream ss(FT_TOPO);
         while(!ss.eof())
         {
             ss >> tmp;

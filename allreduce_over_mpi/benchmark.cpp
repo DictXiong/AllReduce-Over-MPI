@@ -64,16 +64,14 @@ int main(int argc, char **argv)
         {
             i++;
             CHECK_GE(argc, i);
-            std::stringstream ss;
-            ss << argv[i];
+            std::istringstream ss(argv[i]);
             ss >> data_len;
         }
         else if (strcmp(argv[i], "--repeat") == 0)
         {
             i++;
             CHECK_GE(argc, i);
-            std::stringstream ss;
-            ss << argv[i];
+            std::istringstream ss(argv[i]);
             ss >> repeat;
         }
         else if (strcmp(argv[i], "--to-file") == 0)
@@ -83,8 +81,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--comm-type") == 0)
         {
             i++;
-            std::stringstream ss;
-            ss << argv[i];
+            std::istringstream ss(argv[i]);
             ss >> tmp;
             if (strcmp(argv[i], "mpi") == 0)
             {
@@ -112,21 +109,19 @@ int main(int argc, char **argv)
     // 各种初始化完成
     MPI_Barrier(MPI_COMM_WORLD);
     // 打印设置总结
+    if (node_label == 0)
     {
-        LOG_IF(WARNING, node_label == 0) << "\nconfiguration: \n  - total_peers: "<< total_peers << "\n  - data_size: " << data_len << "\n  - repeat: " << repeat << "\n  - to_file: " << (to_file ? "true":"false") << "\n  - communication method: " << (comm_type ? "mpi":"flextree"); 
+        std::ostringstream ss;
+        ss << "configuration: \n  - total_peers: "<< total_peers << "\n  - data_size: " << data_len << "\n  - repeat: " << repeat << "\n  - to_file: " << (to_file ? "true":"false") << "\n  - communication method: " << (comm_type ? "mpi":"flextree"); 
         if (comm_type == 0)
         {
-            std::string s;
-            std::stringstream ss;
-            ss << "  - And FlexTree topo is ";
+            ss << "\n  - And FlexTree topo is ";
             for (auto i:topo)
             {
                 ss << i << " ";
             }
-            getline(ss, s);
-            LOG_IF(WARNING, node_label == 0) << "\n" << s;
         }
-        
+        LOG(WARNING) << "\n" << ss.str();
     }
     LOG_IF(INFO, node_label == 0) << "sleep for 2 senconds";
     std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -180,7 +175,7 @@ int main(int argc, char **argv)
     // 写入文件
     if (node_label == 0 && to_file)
     {
-        std::stringstream ss;
+        std::ostringstream ss;
         ss << total_peers << "." << data_len << ".";
         for (auto i : topo)
         {
@@ -188,9 +183,7 @@ int main(int argc, char **argv)
         }
         ss << (comm_only ? ".comm_test." : ".ar_test.");
         ss << time(NULL) << ".txt";
-        std::string filename;
-        ss >> filename;
-        write_vector_to_file(repeat_time, filename);
+        write_vector_to_file(repeat_time, ss.str());
     }
 
     LOG_IF(WARNING, node_label == 0) << "\nDONE, average time: " << sum_time / repeat << ", min time: " << min_time << std::endl;
