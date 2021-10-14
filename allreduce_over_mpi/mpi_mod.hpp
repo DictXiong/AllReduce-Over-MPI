@@ -17,7 +17,7 @@ static int FT_enabled()
 #include<string.h>
 #include<thread>
 #include<stdlib.h>
-#ifndef OMPI_MPI_H
+#ifdef STANDALONE_TEST
 #include<mpi.h>
 #include<glog/logging.h>
 const int INF = 0x3F3F3F3F;
@@ -26,14 +26,20 @@ const int INF = 0x3F3F3F3F;
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
-//#define FT_DEBUG
-
+namespace FlexTree
+{
+// LOG 控制
+//#define FT_DEBUG 
 //#define SHOW_TIME // 显示更多的时间调试信息
 #ifdef SHOW_TIME
 double _time_base;
 #define TIME_RESET() do {_time_base=MPI_Wtime();} while (false)
 #define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<" :: "<<note;} while (false)
 #endif
+// end of LOG 控制
+
+static bool comm_only = false;
+static void *recv_buffer = nullptr; //必须初始化
 
 // Op
 class Operation
@@ -872,6 +878,7 @@ static void handle_reduce(const MPI_Datatype &datatype, const MPI_Op &op, const 
 }
 
 // 从环境变量获取每一层宽度
+// 任意一个位置是 1, 那就用 ring
 static std::vector<size_t> get_stages(const size_t &num_nodes)
 {
     std::string FT_TOPO; 
@@ -897,6 +904,10 @@ static std::vector<size_t> get_stages(const size_t &num_nodes)
         while(!ss.eof())
         {
             ss >> tmp;
+            if (tmp == 1)
+            {
+                return {1};
+            }
             ans.push_back(tmp);
             pi *= tmp;
         }
@@ -917,8 +928,26 @@ static std::vector<size_t> get_stages(const size_t &num_nodes)
     return ans;
 }
 
-static bool comm_only = false;
-static void *recv_buffer = nullptr; //必须初始化
+// NOTE: 可别把这个buffer给私自delete了
+static void* flextree_register_the_buffer(size_t _size)
+{
+    static void* buffer;
+    static size_t size = 0;
+    if (_size > size)
+    {
+        if (size != 0)
+        {
+            delete[] buffer;
+            buffer = nullptr;
+        }
+#ifdef FT_DEBUG
+        std::cout << "registered a buffer of " << _size << std::endl;
+#endif
+        buffer = (void*)(new char[_size]);
+        size = _size;
+    }
+    return buffer;
+}
 
 // 如果需要原地 ar, 那么将 data 置为 nullptr.
 static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const MPI_Comm &comm, const void *data, void *dst, const FlexTree_Context &ft_ctx, const std::vector<size_t> &stages)
@@ -1081,28 +1110,61 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
 #endif
 }
 
-// NOTE: 可别把这个buffer给私自delete了
-static void* flextree_register_the_buffer(size_t _size)
+static void ring_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const MPI_Comm &comm, const void *data, void *dst, const FlexTree_Context &ft_ctx)
 {
-    static void* buffer;
-    static size_t size = 0;
-    if (_size > size)
+    if (data == nullptr)
     {
-        if (size != 0)
-        {
-            delete[] buffer;
-            buffer = nullptr;
-        }
-#ifdef FT_DEBUG
-        std::cout << "registered a buffer of " << _size << std::endl;
-#endif
-        buffer = (void*)(new char[_size]);
-        size = _size;
+        data = dst;
     }
-    return buffer;
+    const size_t left = (ft_ctx.node_label == 0 ? ft_ctx.num_nodes - 1 : ft_ctx.node_label - 1);
+    const size_t right = (ft_ctx.node_label == ft_ctx.num_nodes - 1 ? 0 : ft_ctx.node_label + 1);
+    size_t block_send = ft_ctx.node_label;
+    size_t block_recv = left;
+    const size_t MAX_COMM_SIZE = 4;
+    size_t request_index = 0;
+    MPI_Request *requests = new MPI_Request[MAX_COMM_SIZE];
+    MPI_Status *status = new MPI_Status[MAX_COMM_SIZE];
+    
+    //LOG_IF(WARNING, node_label == 0) << "gathering start";
+    for (size_t i = 0; i != ft_ctx.num_nodes - 1; i++)
+    {
+        std::vector<Operation> send_ops = {Operation(right, block_send)};
+        std::vector<Operation> recv_ops = {Operation(left, block_recv)};
+        if (UNLIKELY(i == 0)) // 只有第一次是直接从原始数据里面发
+        {
+            request_index = handle_send(comm, datatype, &send_ops, data, ft_ctx, requests);
+        }
+        else
+        {
+            request_index = handle_send(comm, datatype, &send_ops, dst, ft_ctx, requests);
+        }
+        request_index += handle_recv(comm, datatype, &recv_ops, recv_buffer, ft_ctx, false, requests + request_index);
+        MPI_Waitall(request_index, requests, status); 
+        handle_reduce(datatype, op, &(recv_ops[0].blocks), recv_buffer, data, dst, ft_ctx, 1);
+        MPI_Barrier(comm);
+        block_send = (block_send == 0 ? ft_ctx.num_nodes - 1 : block_send - 1);
+        block_recv = (block_recv == 0 ? ft_ctx.num_nodes - 1 : block_recv - 1);
+    }
+    //LOG_IF(WARNING, node_label == 0) << "gathering done";
+    for (size_t i = 0; i != ft_ctx.num_nodes - 1; i++)
+    {
+        std::vector<Operation> send_ops = {Operation(right, block_send)};
+        std::vector<Operation> recv_ops = {Operation(left, block_recv)};
+        request_index = handle_send(comm, datatype, &send_ops, dst, ft_ctx, requests);
+        request_index += handle_recv(comm, datatype, &recv_ops, dst, ft_ctx, true, requests + request_index);
+        MPI_Waitall(request_index, requests, status); 
+        MPI_Barrier(comm);
+        block_send = (block_send == 0 ? ft_ctx.num_nodes - 1 : block_send - 1);
+        block_recv = (block_recv == 0 ? ft_ctx.num_nodes - 1 : block_recv - 1);
+    }
+    //LOG_IF(WARNING, node_label == 0) << "broadcast done";
+    delete[] requests;
+    delete[] status;
 }
 
-#ifndef OMPI_MPI_H
+} // end of namespace FlexTree
+
+#ifdef STANDALONE_TEST
 int MPI_Allreduce_FT(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 #else
 static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
@@ -1111,7 +1173,7 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
 #ifdef FT_DEBUG
     std::cout << "FlexTree AR called" << std::endl;
 #endif
-    const FlexTree_Context ft_ctx(comm, datatype, count);
+    const FlexTree::FlexTree_Context ft_ctx(comm, datatype, count);
 #ifdef FT_DEBUG
     if (ft_ctx.node_label == ft_ctx.num_nodes - 2) ft_ctx.show_context();
 #endif
@@ -1125,18 +1187,33 @@ static int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count, MPI_Data
         return 0;
     }
 
-    recv_buffer = flextree_register_the_buffer(ft_ctx.data_size_aligned * ft_ctx.type_size);
-    auto stages = get_stages(ft_ctx.num_nodes);
+    FlexTree::recv_buffer = FlexTree::flextree_register_the_buffer(ft_ctx.data_size_aligned * ft_ctx.type_size);
+    auto stages = FlexTree::get_stages(ft_ctx.num_nodes);
     
     // MPI_IN_PLACE
-    if (sendbuf == MPI_IN_PLACE)
+    if (stages[0] != 1)
     {
-        tree_allreduce(datatype, op, comm, nullptr, recvbuf, ft_ctx, stages);
+        if (sendbuf == MPI_IN_PLACE)
+        {
+            FlexTree::tree_allreduce(datatype, op, comm, nullptr, recvbuf, ft_ctx, stages);
+        }
+        else 
+        {
+            FlexTree::tree_allreduce(datatype, op, comm, sendbuf, recvbuf, ft_ctx, stages);
+        }
     }
-    else 
+    else
     {
-        tree_allreduce(datatype, op, comm, sendbuf, recvbuf, ft_ctx, stages);
+        if (sendbuf == MPI_IN_PLACE)
+        {
+            FlexTree::ring_allreduce(datatype, op, comm, nullptr, recvbuf, ft_ctx);
+        }
+        else 
+        {
+            FlexTree::ring_allreduce(datatype, op, comm, sendbuf, recvbuf, ft_ctx);
+        }
     }
+    
 #ifdef FT_DEBUG
     std::cout << "FlexTree AR finished" << std::endl;
 #endif

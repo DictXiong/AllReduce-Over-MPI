@@ -7,8 +7,13 @@
 #include<stdlib.h>
 #include<mpi.h>
 #include<glog/logging.h>
+#define STANDALONE_TEST
 #include "mpi_mod.hpp"
 
+void show_version()
+{
+    LOG(WARNING) << std::endl << "----------" << std::endl << "FlexTree Standalone Benchmark" << std::endl << "version: " << GIT_REPO_VERSION << std::endl << "date: " << GIT_REPO_DATE << std::endl << "hash: " << GIT_REPO_HASH << std::endl;
+}
 
 // util
 template<typename T>
@@ -46,7 +51,7 @@ int main(int argc, char **argv)
     node_label = tmp;
     // end init
 
-    auto topo = get_stages(total_peers);
+    auto topo = FlexTree::get_stages(total_peers);
 
     // init glog
     FLAGS_colorlogtostderr = true;
@@ -93,6 +98,11 @@ int main(int argc, char **argv)
             }
             break;
         }
+        else if (strcmp(argv[i], "--version") == 0)
+        {
+            show_version();
+            exit(0);
+        }
         else
         {
             LOG(FATAL) << "unknown parameter: " << argv[i];
@@ -100,12 +110,12 @@ int main(int argc, char **argv)
     }
 
     // 初始化 data 和 buffer
-    double *data = new double[data_len];
+    float *data = new float[data_len];
     for (size_t i = 0; i != data_len; i++)
     {
         data[i] = i / 1.0;
     }
-    auto recvbuf =(void*)(new double[data_len]);
+    auto recvbuf =(void*)(new float[data_len]);
     // 各种初始化完成
     MPI_Barrier(MPI_COMM_WORLD);
     // 打印设置总结
@@ -132,7 +142,7 @@ int main(int argc, char **argv)
         {
             MPI_Barrier(MPI_COMM_WORLD);
             auto time1 = MPI_Wtime();
-            MPI_Allreduce_FT(MPI_IN_PLACE, data, data_len, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce_FT(MPI_IN_PLACE, data, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
@@ -181,7 +191,7 @@ int main(int argc, char **argv)
         {
             ss << i << "-";
         }
-        ss << (comm_only ? ".comm_test." : ".ar_test.");
+        ss << (FlexTree::comm_only ? ".comm_test." : ".ar_test.");
         ss << time(NULL) << ".txt";
         write_vector_to_file(repeat_time, ss.str());
     }
