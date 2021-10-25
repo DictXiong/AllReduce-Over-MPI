@@ -96,7 +96,6 @@ int main(int argc, char **argv)
             {
                 comm_type = 0;
             }
-            break;
         }
         else if (strcmp(argv[i], "--tag") == 0)
         {
