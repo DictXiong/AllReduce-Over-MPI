@@ -38,6 +38,7 @@ int main(int argc, char **argv)
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = false;
     size_t data_len = 35;
+    std::string tag;
 
     // others
     std::vector<double> repeat_time;
@@ -86,8 +87,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--comm-type") == 0)
         {
             i++;
-            std::istringstream ss(argv[i]);
-            ss >> tmp;
+            CHECK_GE(argc, i);
             if (strcmp(argv[i], "mpi") == 0)
             {
                 comm_type = 2;
@@ -97,6 +97,13 @@ int main(int argc, char **argv)
                 comm_type = 0;
             }
             break;
+        }
+        else if (strcmp(argv[i], "--tag") == 0)
+        {
+            i++;
+            CHECK_GE(argc, i);
+            std::istringstream ss(argv[i]);
+            ss >> tag;
         }
         else if (strcmp(argv[i], "--version") == 0)
         {
@@ -122,7 +129,9 @@ int main(int argc, char **argv)
     if (node_label == 0)
     {
         std::ostringstream ss;
-        ss << "configuration: \n  - total_peers: "<< total_peers << "\n  - data_size: " << data_len << "\n  - repeat: " << repeat << "\n  - to_file: " << (to_file ? "true":"false") << "\n  - communication method: " << (comm_type ? "mpi":"flextree"); 
+        ss << "configuration: \n  - total_peers: "<< total_peers << "\n  - data_size: " << data_len << "\n  - repeat: " << repeat << "\n  - to_file: " << (to_file ? "true":"false");
+        if (to_file && !tag.empty()) ss << "\n  - file tag: " << tag;
+        ss << "\n  - communication method: " << (comm_type ? "mpi":"flextree");
         if (comm_type == 0)
         {
             ss << "\n  - And FlexTree topo is ";
@@ -186,10 +195,18 @@ int main(int argc, char **argv)
     if (node_label == 0 && to_file)
     {
         std::ostringstream ss;
+        if (!tag.empty()) ss << tag << ".";
         ss << total_peers << "." << data_len << ".";
-        for (auto i : topo)
+        if (comm_type == 0)
         {
-            ss << i << "-";
+            for (auto i : topo)
+            {
+                ss << i << "-";
+            }
+        }
+        else
+        {
+            ss << "mpi";
         }
         ss << (FlexTree::comm_only ? ".comm_test." : ".ar_test.");
         ss << time(NULL) << ".txt";
