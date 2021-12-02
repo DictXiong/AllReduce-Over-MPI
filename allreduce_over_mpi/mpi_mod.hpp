@@ -1561,7 +1561,7 @@ static void ring_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         std::vector<FMA_Operation> fma_send_ops = {FMA_Operation(right, block_send, ft_ctx.num_nodes, ft_ctx.data_size, false)};
         std::vector<FMA_Operation> fma_recv_ops = {FMA_Operation(left, block_recv, ft_ctx.num_nodes, ft_ctx.data_size, false)};
         request_index = handle_send(comm, datatype, &fma_send_ops, dst, ft_ctx, requests);
-        request_index = handle_recv(comm, datatype, &fma_recv_ops, dst, ft_ctx, requests + request_index);
+        request_index += handle_recv(comm, datatype, &fma_recv_ops, dst, ft_ctx, requests + request_index);
         MPI_Waitall(request_index, requests, status); 
         MPI_Barrier(comm);
         block_send = (block_send == 0 ? ft_ctx.num_nodes - 1 : block_send - 1);
