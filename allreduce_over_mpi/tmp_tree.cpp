@@ -75,6 +75,19 @@ public:
             blocks.push_back(i);
         }
     }
+    std::string to_string()const
+    {
+        if (blocks.empty()) return ""; 
+        std::ostringstream os;
+        os<< "peer " << peer <<": ";
+        for (auto k:blocks)
+        {
+            os<<k<<",";
+        }
+        std::string ans(std::move(os.str()));
+        ans.pop_back();
+        return ans;
+    }
 };
 
 // 为什么不在构造时直接使用 ft_ctx: 因为 ft_ctx 是与 mpi 强耦合的一个东西, 但是 operations 以及拓扑的生成应当只和所需要的这三个参数有关系, 不要和 mpi 扯上关系.
@@ -123,18 +136,14 @@ public:
             }
             for (const auto &j:i)
             {
-                std::cout<< " | node " << j.peer<<": ";
-                for (auto k:j.blocks)
-                {
-                    std::cout<<k<<",";
-                }
+                std::cout<< " | " << j.to_string();
             }
             std::cout<<std::endl;
         }
         //if ((node_label < num_split && has_lonely_blocks()) || (node_label >= num_split))
         if (!lonely_ops.empty())
         {
-            std::cout << "and " << num_lonely << " lonely node(s):" << std::endl;
+            std::cout << "AND " << num_lonely << " lonely node(s):" << std::endl;
             for (const auto &i:lonely_ops)
             {
                 if (&i != &*(lonely_ops.end() - 1))
@@ -147,11 +156,7 @@ public:
                 }
                 for (const auto &j:i)
                 {
-                    std::cout<< " | node " << j.peer<<": ";
-                    for (auto k:j.blocks)
-                    {
-                        std::cout<<k<<",";
-                    }
+                    std::cout<< " | " << j.to_string();
                 }
                 std::cout<<std::endl;
             }
@@ -410,17 +415,46 @@ public:
 class FMA_Operation
 {
 public:
-    size_t split_size;
+    struct _Memory_Range
+    {
+        /**
+         * @brief 简单结构体. addr 是起始地址, len 是长度.
+         * actual_addr 是: 这块数据, 本来在 src 中偏移量是多少? 用于 reduce 的时候能找到 reduce 后的数据往哪儿放.
+         */
+        size_t addr, len, actual_addr;
+        _Memory_Range()
+        {
+            len = 0;
+        } 
+        _Memory_Range(size_t _addr, size_t _len, size_t _actual_addr): addr(_addr), len(_len), actual_addr(_actual_addr)
+        {}
+        std::string to_string()const 
+        {
+            std::ostringstream os;
+            os << addr;
+            if (addr != actual_addr) os << "(" << actual_addr << ")";
+            os << "+" << len;
+            return os.str();
+        }
+    };
+
 public:
-    // actual_addr 是: 这块数据, 本来在 src 中偏移量是多少? 用于 reduce 的时候能找到 reduce 后的数据往哪儿放.
-    size_t peer,addr,len,actual_addr;
+    size_t peer;
+    std::vector<_Memory_Range> ranges;
     bool valid = false, from_src = false;
-    // from_src 是指, 是从 src 里面取 (false), 还是从 dst 里面取数据 (true)
+    /**
+     * from_src 是指, 是从 src 里面取 (false), 还是从 dst 里面取数据 (true)
+     * 这里展开讲讲:
+     * 1. 对于发送操作来说, from_src matters. 因为发送要么是从 src 发送, 要么是从 dst 发送. 这个 flag 可以在发送的时候指导从哪儿取数据.
+     * 2. 对于接受操作来说, it doesn't matter. 因为无论如何肯定是接收到 buffer 里面的.
+     */
 public:
     FMA_Operation()
     {
         valid = false;
     }
+    FMA_Operation(size_t _peer, bool _from_src):peer(_peer), from_src(_from_src)
+    {}
     /**
      * @brief Construct a new fma operation object
      * 根据 peer 和 block 来构造. 
@@ -434,11 +468,20 @@ public:
      */
     FMA_Operation(size_t _peer, size_t block_label, size_t num_nodes, size_t data_len, bool _from_src, size_t _addr = INF): peer(_peer), from_src(_from_src)
     {
-        assert(block_label < num_nodes);
-        assert(_peer < num_nodes);
+        valid = true;
+        assert(peer < num_nodes);
 
-        split_size = (data_len + num_nodes - 1) / num_nodes;
-        actual_addr = split_size * block_label;
+        push_block_back(block_label, num_nodes, data_len, _addr);
+    }
+    void push_block_back(size_t block_label, size_t num_nodes, size_t data_len, size_t _addr = INF)
+    {
+        assert(block_label < num_nodes);
+        assert(peer < num_nodes);
+
+
+        size_t split_size = Helper::get_split_size(data_len, num_nodes);
+        size_t actual_addr = split_size * block_label;
+        size_t len, addr;
         if (actual_addr > data_len)
         {
             len = 0;
@@ -451,7 +494,6 @@ public:
         {
             len = split_size;
         }
-        valid = true;
         if (_addr == INF)
         {
             addr = actual_addr;
@@ -460,6 +502,20 @@ public:
         {
             addr = _addr;
         }
+        ranges.emplace_back(addr, len, actual_addr);
+    }
+    std::string to_string()const
+    {
+        if (ranges.empty()) return "";
+        std::ostringstream os;
+        os << "peer " << peer << (from_src ? 's' : 'n') << ": ";
+        for (const auto &i:ranges)
+        {
+            os << i.to_string() << ",";
+        }
+        std::string ans(std::move(os.str()));
+        ans.pop_back();
+        return ans;
     }
 };
 
@@ -482,21 +538,6 @@ public:
         raw_recv_operations = rops;
     }
     virtual void generate() = 0;
-    /**
-     * @brief 把 ops 给翻译成 fma_ops
-     * 
-     * @param stage_ops 结果会push到这里面去
-     * @param ops 源
-     * @param is_src 你懂的
-     */
-    void generate_from_ops(std::vector<FMA_Operation> *stage_ops, std::vector<Operation> *ops, bool is_src)
-    {
-        for (const auto &j: *ops)
-            for (const auto &k : j.blocks)
-            {
-                stage_ops->emplace_back(j.peer, k, num_nodes, data_len, is_src);
-            }
-    }
     virtual void print()const
     {
         std::cout << "\033[0m\033[1;30;42m" << typeid(*this).name() << "\033[0m" << " of node " << raw_send_operations->node_label << " in total " << raw_send_operations->num_split << " peers: " << std::endl;
@@ -512,12 +553,7 @@ public:
             }
             for (const auto &j:i)
             {
-                std::cout<< " | node " << j.peer <<": " << j.addr;
-                if (j.addr != j.actual_addr)
-                {
-                    std::cout << "(" << j.actual_addr << ")";
-                }
-                std::cout << "+" << j.len;
+                std::cout<< " | " << j.to_string();
             }
             std::cout<<std::endl;
         }
@@ -536,12 +572,7 @@ public:
                 }
                 for (const auto &j:i)
                 {
-                    std::cout<< " | node " << j.peer <<": " << j.addr;
-                    if (j.addr != j.actual_addr)
-                    {
-                        std::cout << "(" << j.actual_addr << ")";
-                    }
-                    std::cout << "+" << j.len;
+                    std::cout<< " | " << j.to_string();
                 }
                 std::cout<<std::endl;
             }
@@ -560,6 +591,19 @@ public:
     virtual void generate()
     {
         assert(raw_send_operations != nullptr && raw_recv_operations != nullptr);
+
+        auto generate_from_ops = [&](std::vector<FMA_Operation> *stage_ops, std::vector<Operation> *ops, bool is_src)
+        {
+            for (const auto &j: *ops)
+            {
+                FMA_Operation tmp_op(j.peer, is_src);
+                for (const auto &k : j.blocks)
+                {
+                    tmp_op.push_block_back(k, num_nodes, data_len);
+                }
+                stage_ops->push_back(tmp_op);
+            }
+        };
         const size_t num_stages = raw_send_operations->stages.size();
         if (!raw_send_operations->ops.empty())
         {
@@ -612,24 +656,28 @@ public:
     virtual void generate()
     {
         assert(raw_send_operations != nullptr && raw_recv_operations != nullptr);
-
+        size_t split_size = Helper::get_split_size(data_len, num_nodes);
         auto generate_from_ops = [&](std::vector<FMA_Operation> *stage_ops, std::vector<Operation> *ops, bool accordingly, size_t offset = 0)
         {
             for (const auto &j: *ops)
+            {
+                FMA_Operation tmp_op(j.peer, false);
                 for (const auto &k : j.blocks)
                 {
                     if (!accordingly)
                     {
                         // 则平铺直叙
-                        stage_ops->emplace_back(j.peer, k, num_nodes, data_len, false, offset);
-                        (offset) += stage_ops->begin()->split_size;
+                        tmp_op.push_block_back(k, num_nodes, data_len, offset);
+                        (offset) += split_size;
                     }
                     else
                     {
                         // 则对位覆写
-                        stage_ops->emplace_back(j.peer, k, num_nodes, data_len, false);
+                        tmp_op.push_block_back(k, num_nodes, data_len);
                     }
                 }
+                stage_ops->push_back(std::move(tmp_op)); // ?
+            }
         };
 
         const size_t num_stages = raw_send_operations->stages.size();
@@ -652,7 +700,7 @@ public:
             }
         }
         // 孤立节点
-        size_t offset = Helper::get_split_size(data_len, num_nodes) * (num_nodes);
+        size_t offset = split_size * num_nodes;
         if (!raw_recv_operations->lonely_ops.empty())
         {
             for (size_t i = 0; i < num_stages; i++)
@@ -681,26 +729,22 @@ int main()
     using namespace std;
     using namespace FlexTree;
     cout << "----- Test of tree generator -----" << endl;
-for (size_t i = 20; i != 25; i++){
+for (size_t i = 0; i != 4; i++){
     Send_Operations send(26, 2, i, {4,3,2});
     Recv_Operations recv(26, 2, i, {4,3,2});
-    //auto watch = send.find_followers(0);
-    //print_vector(watch);
+    FMA_Send_Operations fma_send(&send, &recv, 26, 52);
+    FMA_Recv_Operations fma_recv(&send, &recv, 26, 52);
 
     send.generate(); recv.generate();
+    fma_send.generate();
+    fma_recv.generate();
     send.print();
+    cout << " --- " << endl;
+    fma_send.print();
     cout << " --- " << endl;
     recv.print();
     cout << " --- " << endl;
-    {
-        FMA_Send_Operations fma_send(&send, &recv, 26, 52);
-        FMA_Recv_Operations fma_recv(&send, &recv, 26, 52);
-        fma_send.generate();
-        fma_recv.generate();
-        fma_send.print();
-        cout << " --- " << endl;
-        fma_recv.print();
-    }
+    fma_recv.print();
     cout << endl << endl;
 }
     return 0;
