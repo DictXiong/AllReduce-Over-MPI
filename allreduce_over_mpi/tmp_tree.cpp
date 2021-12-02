@@ -729,11 +729,11 @@ int main()
     using namespace std;
     using namespace FlexTree;
     cout << "----- Test of tree generator -----" << endl;
-for (size_t i = 0; i != 4; i++){
+for (size_t i = 20; i != 25; i++){
     Send_Operations send(26, 2, i, {4,3,2});
     Recv_Operations recv(26, 2, i, {4,3,2});
-    FMA_Send_Operations fma_send(&send, &recv, 26, 52);
-    FMA_Recv_Operations fma_recv(&send, &recv, 26, 52);
+    FMA_Send_Operations fma_send(&send, &recv, 26, 590);
+    FMA_Recv_Operations fma_recv(&send, &recv, 26, 590);
 
     send.generate(); recv.generate();
     fma_send.generate();

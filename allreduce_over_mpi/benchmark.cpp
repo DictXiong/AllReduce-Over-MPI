@@ -34,7 +34,7 @@ int main(int argc, char **argv)
 
     // 命令行参数
     int repeat = 1;
-    double sum_time = 0, min_time = INF;
+    double sum_time = 0, min_time = FlexTree::INF;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = false;
     size_t data_len = 35;
