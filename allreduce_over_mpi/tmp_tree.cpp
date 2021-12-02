@@ -3,21 +3,44 @@
 #include<iostream>
 #include<vector>
 #include<assert.h>
-
-template<class T>
-void print_vector(std::vector<T> v)
-{
-    for (auto i:v)
-    {
-        std::cout << i << ",";
-    }
-    std::cout << std::endl;
-}
+#include<string>
+#include<sstream>
 
 namespace FlexTree
 {
 
 const int INF = 0x3F3F3F3F;
+
+class Helper
+{
+public:
+    static size_t get_split_size(size_t data_len, size_t num_split)
+    {
+        return (data_len + num_split - 1) / num_split;
+    }
+    template<class T>
+    static std::string vector_to_string(std::vector<T> vec, char split = ',')
+    {
+        if (vec.empty()) return "";
+        std::ostringstream is;
+        for (const auto i:vec)
+        {
+            is << i << split;
+        }
+        auto ans = is.str();
+        ans.pop_back();
+        return ans;
+    }
+    template<class T>
+    static void print_vector(std::vector<T> vec, bool newline = true, char split = ',' )
+    {
+        std::cout << vector_to_string(vec, split);
+        if (newline)
+        {
+            std::cout << std::endl;
+        }
+    }
+};
 
 class Operation
 {
@@ -87,16 +110,16 @@ public:
     // 打印拓扑
     virtual void print()const
     {
-        std::cout << typeid(*this).name() << " of node " << node_label << " in total " << num_split << " peers: " << std::endl;
+        std::cout << "\033[0m\033[1;30;43m" << typeid(*this).name() << "\033[0m of node " << node_label << " in total " << num_split << " peers: " << std::endl;
         for (const auto &i:ops)
         {
             if (&i != &*(ops.end() - 1))
             {
-                std::cout << "┝ stage";
+                std::cout << "\033[0m\033[1;33m┝ stage\033[0m";
             }
             else 
             {
-                std::cout << "┕ stage";
+                std::cout << "\033[0m\033[1;33m┕ stage\033[0m";
             }
             for (const auto &j:i)
             {
@@ -108,18 +131,19 @@ public:
             }
             std::cout<<std::endl;
         }
-        if ((node_label < num_split && has_lonely_blocks()) || (node_label >= num_split))
+        //if ((node_label < num_split && has_lonely_blocks()) || (node_label >= num_split))
+        if (!lonely_ops.empty())
         {
             std::cout << "and " << num_lonely << " lonely node(s):" << std::endl;
             for (const auto &i:lonely_ops)
             {
                 if (&i != &*(lonely_ops.end() - 1))
                 {
-                    std::cout << "┝ stage";
+                    std::cout << "\033[0m\033[1;33m┝ stage\033[0m";
                 }
                 else 
                 {
-                    std::cout << "┕ stage";
+                    std::cout << "\033[0m\033[1;33m┕ stage\033[0m";
                 }
                 for (const auto &j:i)
                 {
@@ -273,6 +297,7 @@ public:
                 lonely_ops.push_back(stage_lonely_ops);
             }
             // 最后一步不发东西
+            lonely_ops.emplace_back();
         }
     }
 };
@@ -377,6 +402,278 @@ public:
     }
 };
 
+/**
+ * FMA = FlexTree-MPI Adapter
+ * 用这种缩写看起来就很高大上
+ * 其实很简单: 就是标明向谁发哪块内存地址的数据
+ */
+class FMA_Operation
+{
+public:
+    size_t split_size;
+public:
+    // actual_addr 是: 这块数据, 本来在 src 中偏移量是多少? 用于 reduce 的时候能找到 reduce 后的数据往哪儿放.
+    size_t peer,addr,len,actual_addr;
+    bool valid = false, from_src = false;
+    // from_src 是指, 是从 src 里面取 (false), 还是从 dst 里面取数据 (true)
+public:
+    FMA_Operation()
+    {
+        valid = false;
+    }
+    /**
+     * @brief Construct a new fma operation object
+     * 根据 peer 和 block 来构造. 
+     * 如果给出了 _addr, 那就修改源地址. 一般配合 from_src = false 使用, 考虑接收的情况.
+     * 
+     * @param _peer 
+     * @param block_label 
+     * @param num_nodes 总共的节点数, 也就是切分块数
+     * @param data_len 
+     * @param _from_src from_src 是指, 是从源数据块里面取 (true), 还是从 dst 里面取数据 (false)
+     */
+    FMA_Operation(size_t _peer, size_t block_label, size_t num_nodes, size_t data_len, bool _from_src, size_t _addr = INF): peer(_peer), from_src(_from_src)
+    {
+        assert(block_label < num_nodes);
+        assert(_peer < num_nodes);
+
+        split_size = (data_len + num_nodes - 1) / num_nodes;
+        actual_addr = split_size * block_label;
+        if (actual_addr > data_len)
+        {
+            len = 0;
+        }
+        else if (actual_addr + split_size > data_len)
+        {
+            len = data_len - actual_addr;
+        }
+        else 
+        {
+            len = split_size;
+        }
+        valid = true;
+        if (_addr == INF)
+        {
+            addr = actual_addr;
+        }
+        else 
+        {
+            addr = _addr;
+        }
+    }
+};
+
+class FMA_Operations
+{
+public:
+    Send_Operations *raw_send_operations = nullptr;
+    Recv_Operations *raw_recv_operations = nullptr;
+    std::vector<std::vector<FMA_Operation>> FMA_ops, FMA_lonely_ops;
+    size_t num_nodes, data_len;
+    FMA_Operations()
+    {
+        raw_send_operations = nullptr;
+        raw_recv_operations = nullptr;
+    }
+    FMA_Operations(Send_Operations* sops, Recv_Operations* rops, size_t _num_nodes, size_t _data_len):num_nodes(_num_nodes), data_len(_data_len) 
+    {
+        assert(sops != nullptr && rops != nullptr);
+        raw_send_operations = sops;
+        raw_recv_operations = rops;
+    }
+    virtual void generate() = 0;
+    /**
+     * @brief 把 ops 给翻译成 fma_ops
+     * 
+     * @param stage_ops 结果会push到这里面去
+     * @param ops 源
+     * @param is_src 你懂的
+     */
+    void generate_from_ops(std::vector<FMA_Operation> *stage_ops, std::vector<Operation> *ops, bool is_src)
+    {
+        for (const auto &j: *ops)
+            for (const auto &k : j.blocks)
+            {
+                stage_ops->emplace_back(j.peer, k, num_nodes, data_len, is_src);
+            }
+    }
+    virtual void print()const
+    {
+        std::cout << "\033[0m\033[1;30;42m" << typeid(*this).name() << "\033[0m" << " of node " << raw_send_operations->node_label << " in total " << raw_send_operations->num_split << " peers: " << std::endl;
+        for (const auto &i:FMA_ops)
+        {
+            if (&i != &*(FMA_ops.end() - 1))
+            {
+                std::cout << "\033[0m\033[1;32m┝ stage\033[0m";
+            }
+            else 
+            {
+                std::cout << "\033[0m\033[1;32m┕ stage\033[0m";
+            }
+            for (const auto &j:i)
+            {
+                std::cout<< " | node " << j.peer <<": " << j.addr;
+                if (j.addr != j.actual_addr)
+                {
+                    std::cout << "(" << j.actual_addr << ")";
+                }
+                std::cout << "+" << j.len;
+            }
+            std::cout<<std::endl;
+        }
+        if (!FMA_lonely_ops.empty())
+        {
+            std::cout << "AND lonely op(s):" << std::endl;
+            for (const auto &i:FMA_lonely_ops)
+            {
+                if (&i != &*(FMA_lonely_ops.end() - 1))
+                {
+                    std::cout << "\033[0m\033[1;32m┝ stage\033[0m";
+                }
+                else 
+                {
+                    std::cout << "\033[0m\033[1;32m┕ stage\033[0m";
+                }
+                for (const auto &j:i)
+                {
+                    std::cout<< " | node " << j.peer <<": " << j.addr;
+                    if (j.addr != j.actual_addr)
+                    {
+                        std::cout << "(" << j.actual_addr << ")";
+                    }
+                    std::cout << "+" << j.len;
+                }
+                std::cout<<std::endl;
+            }
+        }
+    }
+};
+
+class FMA_Send_Operations : public FMA_Operations
+{
+public:
+    using FMA_Operations::FMA_Operations;
+    /**
+     * @brief 生成该节点整个生命周期中所有的发送操作
+     * 
+     */
+    virtual void generate()
+    {
+        assert(raw_send_operations != nullptr && raw_recv_operations != nullptr);
+        const size_t num_stages = raw_send_operations->stages.size();
+        if (!raw_send_operations->ops.empty())
+        {
+            for (size_t i = 0; i < num_stages; i++)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_send_operations->ops[i], (i == 0));
+                FMA_ops.push_back(stage_ops);
+            }
+        }
+        if (!raw_recv_operations->ops.empty())
+        {
+            for (int i = num_stages - 1; i >= 0; i--)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_recv_operations->ops[i], false);
+                FMA_ops.push_back(stage_ops);
+            }
+        }
+        // 孤立节点
+        if (!raw_send_operations->lonely_ops.empty())
+        {
+            for (size_t i = 0; i < num_stages; i++)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_send_operations->lonely_ops[i], (i == 0));
+                FMA_lonely_ops.push_back(stage_ops);
+            }
+        }
+        if (!raw_recv_operations->lonely_ops.empty())
+        {
+            for (int i = num_stages - 1; i >= 0; i--)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_recv_operations->lonely_ops[i], false);
+                FMA_lonely_ops.push_back(stage_ops);
+            }
+        }
+    }
+};
+
+class FMA_Recv_Operations : public FMA_Operations
+{
+public:
+    using FMA_Operations::FMA_Operations;
+    /**
+     * @brief 生成该节点整个生命周期中所有的接收操作
+     * 
+     */
+    virtual void generate()
+    {
+        assert(raw_send_operations != nullptr && raw_recv_operations != nullptr);
+
+        auto generate_from_ops = [&](std::vector<FMA_Operation> *stage_ops, std::vector<Operation> *ops, bool accordingly, size_t offset = 0)
+        {
+            for (const auto &j: *ops)
+                for (const auto &k : j.blocks)
+                {
+                    if (!accordingly)
+                    {
+                        // 则平铺直叙
+                        stage_ops->emplace_back(j.peer, k, num_nodes, data_len, false, offset);
+                        (offset) += stage_ops->begin()->split_size;
+                    }
+                    else
+                    {
+                        // 则对位覆写
+                        stage_ops->emplace_back(j.peer, k, num_nodes, data_len, false);
+                    }
+                }
+        };
+
+        const size_t num_stages = raw_send_operations->stages.size();
+        if (!raw_recv_operations->ops.empty())
+        {
+            for (size_t i = 0; i < num_stages; i++)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_recv_operations->ops[i], false);
+                FMA_ops.push_back(stage_ops);
+            }
+        }
+        if (!raw_send_operations->ops.empty())
+        {
+            for (int i = num_stages - 1; i >= 0; i--)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_send_operations->ops[i], true);
+                FMA_ops.push_back(stage_ops);
+            }
+        }
+        // 孤立节点
+        size_t offset = Helper::get_split_size(data_len, num_nodes) * (num_nodes);
+        if (!raw_recv_operations->lonely_ops.empty())
+        {
+            for (size_t i = 0; i < num_stages; i++)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_recv_operations->lonely_ops[i], false, offset);
+                FMA_lonely_ops.push_back(stage_ops);
+            }
+        }
+        if (!raw_send_operations->lonely_ops.empty())
+        {
+            for (int i = num_stages - 1; i >= 0; i--)
+            {
+                std::vector<FMA_Operation> stage_ops;
+                generate_from_ops(&stage_ops, &raw_send_operations->lonely_ops[i], true);
+                FMA_lonely_ops.push_back(stage_ops);
+            }
+        }
+    }
+};
+
 } //end of namespace
 
 int main()
@@ -384,9 +681,9 @@ int main()
     using namespace std;
     using namespace FlexTree;
     cout << "----- Test of tree generator -----" << endl;
-for (size_t i = 0; i != 27; i++){
-    Send_Operations send(27, 3, i, {4,3,2});
-    Recv_Operations recv(27, 3, i, {4,3,2});
+for (size_t i = 20; i != 25; i++){
+    Send_Operations send(26, 2, i, {4,3,2});
+    Recv_Operations recv(26, 2, i, {4,3,2});
     //auto watch = send.find_followers(0);
     //print_vector(watch);
 
@@ -394,6 +691,16 @@ for (size_t i = 0; i != 27; i++){
     send.print();
     cout << " --- " << endl;
     recv.print();
+    cout << " --- " << endl;
+    {
+        FMA_Send_Operations fma_send(&send, &recv, 26, 52);
+        FMA_Recv_Operations fma_recv(&send, &recv, 26, 52);
+        fma_send.generate();
+        fma_recv.generate();
+        fma_send.print();
+        cout << " --- " << endl;
+        fma_recv.print();
+    }
     cout << endl << endl;
 }
     return 0;
