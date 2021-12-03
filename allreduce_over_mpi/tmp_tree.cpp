@@ -164,20 +164,21 @@ public:
     }
 
     /**
-     * @brief 看给的这个节点下面是否覆盖了 lonely blocks 的区间.
+     * @brief 看给的这个节点在第 h 层是否拥有 lonely blocks.
      * @param node_label (default: this->node_label)
+     * @param h 高度
      * @return bool true/false
      */
-    inline bool has_lonely_blocks(size_t n = INF) const 
+    inline bool has_lonely_blocks(size_t h, size_t n = INF) const 
     {
         if (n == INF) n = node_label;
         assert(n < num_split);
-        return (num_lonely > 0) && (n >= stages[0] * (num_lonely)) && (n % stages[0] < num_lonely);
+        return (num_lonely > 0) && (n >= stages[0] * (num_lonely)) && (h == 0 || n % stages[0] < num_lonely);
         /**
          * 值得注意的三个条件:
          * 1. 首先, 全局得存在孤立节点, 才有这个问题.
          * 2. 其次, 该节点应当在孤立区内, 即子节点所覆盖的范围和孤立区重合.
-         * 3. 最后, 这个节点本身在最底层得负责一块孤立.
+         * 3. 最后, 如果问的是非底层的话, 那这个节点本身在最底层得负责一块孤立.
          */
     }
     /**
@@ -214,7 +215,7 @@ public:
         {
             if (find_star(i) % gap == n % gap) ans.push_back(i);
         }
-        if (has_lonely_blocks(n)) return ans;
+        if (has_lonely_blocks(h, n)) return ans;
         else return {};
     }
 };
@@ -239,7 +240,7 @@ public:
                 for (size_t j = 0; j < stages[i]; j++)
                 {
                     stage_ops.emplace_back(left_peer, num_split, gap * stages[i]);
-                    if (has_lonely_blocks())
+                    if (has_lonely_blocks(i))
                     {
                         auto followers = find_followers(i + 1, left_peer);
                         assert(followers.size() <= 1);
@@ -301,8 +302,11 @@ public:
                 }
                 lonely_ops.push_back(stage_lonely_ops);
             }
-            // 最后一步不发东西
-            lonely_ops.emplace_back();
+            // 最后一步不发东西. 然后需要进行对齐.
+            for (size_t i = 2; i < stages.size(); i++)
+            {
+                lonely_ops.emplace_back();
+            }
         }
     }
 };
@@ -333,7 +337,7 @@ public:
                 {
                     op_template.peer = left_peer;
                     stage_ops.emplace_back(op_template);
-                    if (followers.size() > 0 && has_lonely_blocks(left_peer) && i != stages.size() - 1)
+                    if (followers.size() > 0 && has_lonely_blocks(i, left_peer) && i != stages.size() - 1)
                     {
                         /**
                          * 讲讲这个复杂的判断条件. 如果要加之入这一步的接收操作, 需要同时满足
@@ -389,19 +393,23 @@ public:
                 }
                 lonely_ops.push_back(stage_lonely_ops);
             }
+            // 先进行对齐
+            for (size_t i = 2; i < stages.size(); i++)
+            {
+                lonely_ops.emplace_back();
+            }
             // 最后一步要从不孤独的人们那儿收点税
             {
-                std::vector<Operation> stage_lonely_ops;
+                auto stage_lonely_ops = lonely_ops.end() - 1;
                 size_t gap = num_split / *(stages.end() - 1);
                 for (int i = node_label - stages[0]; i >= 0; i -= gap)
                 {
                     if (find_followers(stages.size() - 1, i).size() == 1)
                     {
                         assert(find_followers(stages.size() - 1, i)[0] == node_label);
-                        stage_lonely_ops.emplace_back(i, node_label);
+                        stage_lonely_ops->emplace_back(i, node_label);
                     }
                 }
-                lonely_ops.push_back(stage_lonely_ops);
             }
         }
     }
@@ -411,6 +419,7 @@ public:
  * FMA = FlexTree-MPI Adapter
  * 用这种缩写看起来就很高大上
  * 其实很简单: 就是标明向谁发哪块内存地址的数据
+ * 比 Operation 更近了一步. 不过可以认为是 Operation 推理细化的结果.
  */
 class FMA_Operation
 {
@@ -651,7 +660,6 @@ public:
     using FMA_Operations::FMA_Operations;
     /**
      * @brief 生成该节点整个生命周期中所有的接收操作
-     * 
      */
     virtual void generate()
     {
@@ -722,6 +730,7 @@ public:
     }
 };
 
+
 } //end of namespace
 
 int main()
@@ -729,13 +738,13 @@ int main()
     using namespace std;
     using namespace FlexTree;
     cout << "----- Test of tree generator -----" << endl;
-for (size_t i = 20; i != 25; i++){
-    Send_Operations send(26, 2, i, {4,3,2});
-    Recv_Operations recv(26, 2, i, {4,3,2});
-    FMA_Send_Operations fma_send(&send, &recv, 26, 590);
-    FMA_Recv_Operations fma_recv(&send, &recv, 26, 590);
-
+for (size_t i = 0; i != 5; i++){
+    Send_Operations send(5, 1, i, {2,2});
+    Recv_Operations recv(5, 1, i, {2,2});
     send.generate(); recv.generate();
+    FMA_Send_Operations fma_send(&send, &recv, 5, 27);
+    FMA_Recv_Operations fma_recv(&send, &recv, 5, 27);
+
     fma_send.generate();
     fma_recv.generate();
     send.print();

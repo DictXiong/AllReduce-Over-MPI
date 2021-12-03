@@ -5,6 +5,7 @@
 #include<string.h>
 #include<thread>
 #include<stdlib.h>
+#include<cmath>
 #include<mpi.h>
 #include<glog/logging.h>
 #define STANDALONE_TEST
@@ -134,10 +135,11 @@ int main(int argc, char **argv)
         if (comm_type == 0)
         {
             ss << "\n  - And FlexTree topo is ";
-            for (auto i:topo)
+            for (auto i:topo.first)
             {
                 ss << i << " ";
             }
+            ss << "+" << topo.second << " ";
         }
         LOG(WARNING) << "\n" << ss.str();
     }
@@ -183,7 +185,20 @@ int main(int argc, char **argv)
         if (i == node_label + 1)
         {
             std::cout << "CHECK " << node_label << ": ";
-            for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
+            for (int i = 9; i != 24; i++) std::cout << data[i] << " ";
+            if (true) // 如果打算进行正确性校验
+            {
+                bool valid = true;
+                for (int i = 0; i < data_len; i++)
+                {
+                    if (data[i] - i / 1.0 * pow(total_peers, repeat) > 1e-3)
+                    {
+                        valid = false;
+                    }
+                }
+                if (valid) std::cout << "(test passed)";
+                else LOG(WARNING) << "node " << node_label << " says the result seems not right. Maybe the result is too large?";
+            }
             std::cout << std::endl;
         }
     }
@@ -198,10 +213,11 @@ int main(int argc, char **argv)
         ss << total_peers << "." << data_len << ".";
         if (comm_type == 0)
         {
-            for (auto i : topo)
+            for (auto i : topo.first)
             {
                 ss << i << "-";
             }
+            ss << "+" << topo.second;
         }
         else
         {
