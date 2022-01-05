@@ -35,6 +35,7 @@ void write_vectors_to_file(std::string filename, std::initializer_list<std::vect
 
 #ifdef SHOW_TIME
 extern double time_reduce;
+extern double time_comm;
 #endif
 
 int main(int argc, char **argv)
@@ -54,8 +55,8 @@ int main(int argc, char **argv)
     std::vector<double> repeat_time;
     double sum_time = 0, min_time = FlexTree::INF;
     #ifdef SHOW_TIME
-    std::vector<double> repeat_time_reduce;
-    double sum_time_reduce = 0;
+    std::vector<double> repeat_time_reduce, repeat_time_comm;
+    double sum_time_reduce = 0, sum_time_comm = 0;
     #endif
     int tmp;
 
@@ -172,13 +173,16 @@ int main(int argc, char **argv)
             MPI_Barrier(MPI_COMM_WORLD);
             #ifdef SHOW_TIME
             time_reduce = 0;
+            time_comm = 0;
             #endif
             auto time1 = MPI_Wtime();
             MPI_Allreduce_FT(MPI_IN_PLACE, data, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
             #ifdef SHOW_TIME
             repeat_time_reduce.push_back(time_reduce);
+            repeat_time_comm.push_back(time_comm);
             sum_time_reduce += time_reduce;
+            sum_time_comm += time_comm;
             #endif
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
@@ -193,13 +197,16 @@ int main(int argc, char **argv)
             MPI_Barrier(MPI_COMM_WORLD);
             #ifdef SHOW_TIME
             time_reduce = 0;
+            time_comm = 0;
             #endif
             auto time1 = MPI_Wtime();
             MPI_Allreduce(MPI_IN_PLACE, data, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
             #ifdef SHOW_TIME
             repeat_time_reduce.push_back(time_reduce);
+            repeat_time_comm.push_back(time_comm);
             sum_time_reduce += time_reduce;
+            sum_time_comm += time_comm;
             #endif
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
@@ -262,7 +269,7 @@ int main(int argc, char **argv)
         ss << (FlexTree::comm_only ? ".comm_test." : ".ar_test.");
         ss << time(NULL) << ".txt";
         #ifdef SHOW_TIME
-        write_vectors_to_file(ss.str(), {repeat_time, repeat_time_reduce});
+        write_vectors_to_file(ss.str(), {repeat_time, repeat_time_reduce, repeat_time_comm});
         #else
         write_vectors_to_file(ss.str(), {repeat_time});
         #endif
@@ -270,7 +277,8 @@ int main(int argc, char **argv)
 
     LOG_IF(WARNING, node_label == 0) << "\nDONE, average time: " << sum_time / repeat << ", min time: " << min_time << std::endl;
     #ifdef SHOW_TIME
-    LOG_IF(INFO, node_label == 0) << "And average reduce time: " << sum_time_reduce / repeat << std::endl;
+    LOG_IF(INFO, node_label == 0) << "Average reduce time: " << sum_time_reduce / repeat << std::endl;
+    LOG_IF(INFO, node_label == 0) << "Average comm time: " << sum_time_comm / repeat << std::endl;
     #endif
     google::ShutdownGoogleLogging();
 

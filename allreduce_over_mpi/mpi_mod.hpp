@@ -34,6 +34,7 @@ double _timer_base;
 #define TIMER_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_timer_base<<" :: "<<note;} while (false)
 #define TIMER_RECORD(record) do {record += (MPI_Wtime() - _timer_base);} while (false)
 extern double time_reduce = 0;
+extern double time_comm = 0;
 #endif
 // end of LOG 控制
 
@@ -1551,6 +1552,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         #ifdef FT_DEBUG
         std::cout << "ALL SAYS: Here's " << ft_ctx.node_label << " and I'm here." << std::endl; 
         #endif
+        #ifdef SHOW_TIME
+        TIMER_RESET();
+        #endif
         // 我现在就在想: fma_send_ops.FMA_ops[i].begin()->from_src 是不是全等于 i == 0? 或许有空可以 assert 一下.
         request_index = 0;
         if (!fma_send_ops.FMA_ops.empty())
@@ -1573,6 +1577,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         }
         // 先等接收完毕. 因为一旦接收完毕, 就可以开始计算 (reduce) 了.
         MPI_Waitall(tmp, requests + request_index, status);
+        #ifdef SHOW_TIME
+            TIMER_RECORD(time_comm);
+        #endif
         #ifdef FT_DEBUG
         if(ft_ctx.node_label == 0) std::cout << "HERE AND: " << tmp << ", recv_buffer[15] = " << ((float*)(recv_buffer))[15] << std::endl;
         #endif
@@ -1614,6 +1621,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
     }
     if (ft_ctx.node_label == 0) std::cout << "-------- FT DEBUG: complete reduce --------" << std::endl;
     #endif
+    #ifdef SHOW_TIME
+        TIMER_RESET();
+    #endif
     for (int i = num_stages; i < (num_stages << 1); i++)
     {
         //if (ft_ctx.node_label == 0) std::cout << "***FUCK: " << i << std::endl;
@@ -1639,6 +1649,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         MPI_Waitall(request_index, requests, status);
         MPI_Barrier(i == num_stages || i == (num_stages << 1) - 1 ? comm : sub_comm);
     }
+    #ifdef SHOW_TIME
+        TIMER_RECORD(time_comm);
+    #endif
 
     delete[] requests;
     delete[] status;
@@ -1687,10 +1700,14 @@ static void ring_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
             FMA_Operation(left, block_recv, ft_ctx.num_nodes, ft_ctx.data_size, false), 
             FMA_Operation(ft_ctx.node_label, block_recv, ft_ctx.num_nodes, ft_ctx.data_size, false)
         };
+        #ifdef SHOW_TIME
+            TIMER_RESET();
+        #endif
         request_index = handle_send(comm, datatype, &fma_send_ops, (i == 0 ? data : dst), ft_ctx, requests);
         request_index += handle_recv(comm, datatype, &fma_recv_ops, recv_buffer, ft_ctx, requests + request_index);
         MPI_Waitall(request_index, requests, status);
         #ifdef SHOW_TIME
+            TIMER_RECORD(time_comm);
             TIMER_RESET();
         #endif
         handle_reduce(datatype, op, &fma_recv_ops, recv_buffer, data, dst, ft_ctx);
@@ -1706,9 +1723,15 @@ static void ring_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
     {
         std::vector<FMA_Operation> fma_send_ops = {FMA_Operation(right, block_send, ft_ctx.num_nodes, ft_ctx.data_size, false)};
         std::vector<FMA_Operation> fma_recv_ops = {FMA_Operation(left, block_recv, ft_ctx.num_nodes, ft_ctx.data_size, false)};
+        #ifdef SHOW_TIME
+            TIMER_RESET();
+        #endif
         request_index = handle_send(comm, datatype, &fma_send_ops, dst, ft_ctx, requests);
         request_index += handle_recv(comm, datatype, &fma_recv_ops, dst, ft_ctx, requests + request_index);
         MPI_Waitall(request_index, requests, status); 
+        #ifdef SHOW_TIME
+            TIMER_RECORD(time_comm);
+        #endif
         MPI_Barrier(comm);
         block_send = (block_send == 0 ? ft_ctx.num_nodes - 1 : block_send - 1);
         block_recv = (block_recv == 0 ? ft_ctx.num_nodes - 1 : block_recv - 1);
