@@ -4,9 +4,12 @@ set(CMAKE_C_COMPILER "gcc")
 set(CMAKE_CXX_COMPILER "g++")
 set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -Wreorder -fPIC -fopenmp -mavx2")
 
-find_package(glog REQUIRED)
-find_package(MPI REQUIRED)
+option(SHOW_TIME off)
+IF(SHOW_TIME)
+    add_definitions(-DSHOW_TIME)
+ENDIF(SHOW_TIME)
 
+find_package(MPI REQUIRED)
 find_package(Git)
 # 生成版本描述字符串类似 TAG-X-gHASH
 execute_process(COMMAND ${GIT_EXECUTABLE} describe --abbrev=6 --dirty --always --tags

@@ -18,15 +18,24 @@ void show_version()
 
 // util
 template<typename T>
-void write_vector_to_file(std::vector<T> vec, std::string filename)
+void write_vectors_to_file(std::string filename, std::initializer_list<std::vector<T>> vectors)
 {
     std::ofstream f(filename, std::ios::out);
-    for (auto &i : vec)
+    size_t len = vectors.begin()->size();
+    for (size_t i = 0; i < len; ++i)
     {
-        f << i << std::endl;
+        for (const auto &j : vectors)
+        {
+            f << j[i] << "\t";
+        }
+        f << std::endl;
     }
     f.close();
 }
+
+#ifdef SHOW_TIME
+extern double time_reduce;
+#endif
 
 int main(int argc, char **argv)
 {
@@ -35,7 +44,6 @@ int main(int argc, char **argv)
 
     // 命令行参数
     int repeat = 1;
-    double sum_time = 0, min_time = FlexTree::INF;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = false;
     bool check_validity = false;
@@ -44,6 +52,11 @@ int main(int argc, char **argv)
 
     // others
     std::vector<double> repeat_time;
+    double sum_time = 0, min_time = FlexTree::INF;
+    #ifdef SHOW_TIME
+    std::vector<double> repeat_time_reduce;
+    double sum_time_reduce = 0;
+    #endif
     int tmp;
 
     // init mpi
@@ -157,9 +170,16 @@ int main(int argc, char **argv)
         for (auto i = 0; i < repeat; i++)
         {
             MPI_Barrier(MPI_COMM_WORLD);
+            #ifdef SHOW_TIME
+            time_reduce = 0;
+            #endif
             auto time1 = MPI_Wtime();
             MPI_Allreduce_FT(MPI_IN_PLACE, data, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
+            #ifdef SHOW_TIME
+            repeat_time_reduce.push_back(time_reduce);
+            sum_time_reduce += time_reduce;
+            #endif
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
             min_time = std::min(time2 - time1, min_time);
@@ -171,9 +191,16 @@ int main(int argc, char **argv)
         for (auto i = 0; i != repeat; i++)
         {
             MPI_Barrier(MPI_COMM_WORLD);
+            #ifdef SHOW_TIME
+            time_reduce = 0;
+            #endif
             auto time1 = MPI_Wtime();
             MPI_Allreduce(MPI_IN_PLACE, data, data_len, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             auto time2 = MPI_Wtime();
+            #ifdef SHOW_TIME
+            repeat_time_reduce.push_back(time_reduce);
+            sum_time_reduce += time_reduce;
+            #endif
             repeat_time.push_back(time2 - time1);
             sum_time += time2 - time1;
             min_time = std::min(time2 - time1, min_time);
@@ -234,10 +261,17 @@ int main(int argc, char **argv)
         }
         ss << (FlexTree::comm_only ? ".comm_test." : ".ar_test.");
         ss << time(NULL) << ".txt";
-        write_vector_to_file(repeat_time, ss.str());
+        #ifdef SHOW_TIME
+        write_vectors_to_file(ss.str(), {repeat_time, repeat_time_reduce});
+        #else
+        write_vectors_to_file(ss.str(), {repeat_time});
+        #endif
     }
 
     LOG_IF(WARNING, node_label == 0) << "\nDONE, average time: " << sum_time / repeat << ", min time: " << min_time << std::endl;
+    #ifdef SHOW_TIME
+    LOG_IF(INFO, node_label == 0) << "And average reduce time: " << sum_time_reduce / repeat << std::endl;
+    #endif
     google::ShutdownGoogleLogging();
 
     return 0;

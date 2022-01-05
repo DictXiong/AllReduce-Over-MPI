@@ -29,9 +29,11 @@ static int FT_enabled()
 //#define FT_DEBUG 
 //#define SHOW_TIME // 显示更多的时间调试信息
 #ifdef SHOW_TIME
-double _time_base;
-#define TIME_RESET() do {_time_base=MPI_Wtime();} while (false)
-#define TIME_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_time_base<<" :: "<<note;} while (false)
+double _timer_base;
+#define TIMER_RESET() do {_timer_base=MPI_Wtime();} while (false)
+#define TIMER_LOG_IF(exp, note) do {LOG_IF(INFO,exp)<<MPI_Wtime()-_timer_base<<" :: "<<note;} while (false)
+#define TIMER_RECORD(record) do {record += (MPI_Wtime() - _timer_base);} while (false)
+extern double time_reduce = 0;
 #endif
 // end of LOG 控制
 
@@ -1535,9 +1537,6 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
     //MPI_Request *lonely_requests;
     int tmp;
     const size_t num_stages = stages.size();
-#ifdef SHOW_TIME
-    TIME_RESET();
-#endif
     if (ft_ctx.node_label < ft_ctx.num_split)
     {
         MPI_Comm_split(comm, 0, ft_ctx.node_label, &sub_comm);
@@ -1577,6 +1576,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         #ifdef FT_DEBUG
         if(ft_ctx.node_label == 0) std::cout << "HERE AND: " << tmp << ", recv_buffer[15] = " << ((float*)(recv_buffer))[15] << std::endl;
         #endif
+        #ifdef SHOW_TIME
+            TIMER_RESET();
+        #endif
         if (!fma_recv_ops.FMA_ops.empty())
         {
             handle_reduce(datatype, op, &(fma_recv_ops.FMA_ops[i]), recv_buffer, (i == 0 ? data : dst), dst, ft_ctx);
@@ -1585,6 +1587,9 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         {
             handle_reduce(datatype, op, &(fma_recv_ops.FMA_lonely_ops[i]), recv_buffer, (i == 0 ? data : dst), dst, ft_ctx);
         }
+        #ifdef SHOW_TIME
+            TIMER_RECORD(time_reduce);
+        #endif
         #ifdef FT_DEBUG
         if (ft_ctx.node_label == 0)
         {
@@ -1594,9 +1599,6 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         MPI_Waitall(request_index, requests, status);
         MPI_Barrier(i == 0 || i == num_stages - 1 ? comm : sub_comm);
     }
-    #ifdef SHOW_TIME
-        TIME_LOG_IF(node_label == 0, "FT gather finished");
-    #endif SHOW_TIME
     //LOG_IF(WARNING, node_label == 0) << "gathering done";
     #ifdef FT_DEBUG
     for (int i = 0; i <= ft_ctx.num_nodes; i++)
@@ -1610,12 +1612,7 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         }
         MPI_Barrier(comm);
     }
-    #endif
-    #ifdef SHOW_TIME
-        TIME_RESET();
-    #endif
-    #ifdef FT_DEBUG
-        if (ft_ctx.node_label == 0) std::cout << "-------- FT DEBUG: complete reduce --------" << std::endl;
+    if (ft_ctx.node_label == 0) std::cout << "-------- FT DEBUG: complete reduce --------" << std::endl;
     #endif
     for (int i = num_stages; i < (num_stages << 1); i++)
     {
@@ -1642,9 +1639,6 @@ static void tree_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         MPI_Waitall(request_index, requests, status);
         MPI_Barrier(i == num_stages || i == (num_stages << 1) - 1 ? comm : sub_comm);
     }
-    #ifdef SHOW_TIME
-        TIME_LOG_IF(node_label == 0, "FT broadcast finished");
-    #endif SHOW_TIME
 
     delete[] requests;
     delete[] status;
@@ -1696,7 +1690,13 @@ static void ring_allreduce(const MPI_Datatype &datatype, const MPI_Op &op, const
         request_index = handle_send(comm, datatype, &fma_send_ops, (i == 0 ? data : dst), ft_ctx, requests);
         request_index += handle_recv(comm, datatype, &fma_recv_ops, recv_buffer, ft_ctx, requests + request_index);
         MPI_Waitall(request_index, requests, status);
+        #ifdef SHOW_TIME
+            TIMER_RESET();
+        #endif
         handle_reduce(datatype, op, &fma_recv_ops, recv_buffer, data, dst, ft_ctx);
+        #ifdef SHOW_TIME
+            TIMER_RECORD(time_reduce);
+        #endif
         MPI_Barrier(comm);
         block_send = (block_send == 0 ? ft_ctx.num_nodes - 1 : block_send - 1);
         block_recv = (block_recv == 0 ? ft_ctx.num_nodes - 1 : block_recv - 1);

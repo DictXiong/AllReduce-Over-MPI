@@ -23,8 +23,17 @@ sync:
 	scp ./build/allreduce_over_mpi dictxiong@12.12.12.115:~/sync_test/allreduce_over_mpi
 	scp ./build/allreduce_over_mpi dictxiong@12.12.12.116:~/sync_test/allreduce_over_mpi
 
+sync_indoc:
+	for i in {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}
+	do
+		scp ./build/allreduce_over_mpi w${i}:~/sync_test/allreduce_over_mpi
+	done
+
 build:clean
 	mkdir -p build; cd build; cmake ..; make -j32;
+
+build_time:clean
+	mkdir -p build; cd build; cmake .. -DSHOW_TIME=1 ; make -j32;
 
 .PHONY:clean
 clean:
