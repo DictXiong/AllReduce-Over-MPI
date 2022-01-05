@@ -5,6 +5,7 @@
 #include<string.h>
 #include<thread>
 #include<stdlib.h>
+#include<cmath>
 #include<mpi.h>
 #include<glog/logging.h>
 #define STANDALONE_TEST
@@ -34,9 +35,10 @@ int main(int argc, char **argv)
 
     // 命令行参数
     int repeat = 1;
-    double sum_time = 0, min_time = INF;
+    double sum_time = 0, min_time = FlexTree::INF;
     int comm_type = 0; // 0 for tree, 1 for ring, 2 for mpi
     bool to_file = false;
+    bool check_validity = false;
     size_t data_len = 35;
     std::string tag;
 
@@ -109,6 +111,10 @@ int main(int argc, char **argv)
             show_version();
             exit(0);
         }
+        else if (strcmp(argv[i], "--check") == 0)
+        {
+            check_validity = true;
+        }
         else
         {
             LOG(FATAL) << "unknown parameter: " << argv[i];
@@ -117,9 +123,10 @@ int main(int argc, char **argv)
 
     // 初始化 data 和 buffer
     float *data = new float[data_len];
+    const float init_data_base = 0.1;
     for (size_t i = 0; i != data_len; i++)
     {
-        data[i] = i / 1.0;
+        data[i] = i * init_data_base;
     }
     auto recvbuf =(void*)(new float[data_len]);
     // 各种初始化完成
@@ -128,16 +135,17 @@ int main(int argc, char **argv)
     if (node_label == 0)
     {
         std::ostringstream ss;
-        ss << "configuration: \n  - total_peers: "<< total_peers << "\n  - data_size: " << data_len << "\n  - repeat: " << repeat << "\n  - to_file: " << (to_file ? "true":"false");
+        ss << "configuration: \n  - total_peers: "<< total_peers << "\n  - data_size: " << data_len << "\n  - repeat: " << repeat << "\n  - to_file: " << (to_file ? "true":"false") << "\n  - check_validity: " << (check_validity ? "true" : "false");
         if (to_file && !tag.empty()) ss << "\n  - file tag: " << tag;
         ss << "\n  - communication method: " << (comm_type ? "mpi":"flextree");
         if (comm_type == 0)
         {
             ss << "\n  - And FlexTree topo is ";
-            for (auto i:topo)
+            for (auto i:topo.first)
             {
                 ss << i << " ";
             }
+            ss << "+" << topo.second << " ";
         }
         LOG(WARNING) << "\n" << ss.str();
     }
@@ -183,7 +191,23 @@ int main(int argc, char **argv)
         if (i == node_label + 1)
         {
             std::cout << "CHECK " << node_label << ": ";
-            for (int i = 9; i != 20; i++) std::cout << data[i] << " ";
+            for (int i = 9; i != 24; i++) std::cout << data[i] << " ";
+            if (check_validity) // 如果打算进行正确性校验
+            {
+                bool valid = true;
+                size_t invalid_pos = 0;
+                for (int i = 0; i < data_len; i++)
+                {
+                    if (data[i] - i * init_data_base * pow(total_peers, repeat) > init_data_base * 0.1)
+                    {
+                        valid = false;
+                        invalid_pos = i;
+                        break;
+                    }
+                }
+                if (valid) std::cout << "(test passed)";
+                else LOG(WARNING) << "node " << node_label << " says the result seems not right at " << invalid_pos << ". Maybe the result is too large?";
+            }
             std::cout << std::endl;
         }
     }
@@ -198,10 +222,11 @@ int main(int argc, char **argv)
         ss << total_peers << "." << data_len << ".";
         if (comm_type == 0)
         {
-            for (auto i : topo)
+            for (auto i : topo.first)
             {
                 ss << i << "-";
             }
+            ss << "+" << topo.second;
         }
         else
         {
