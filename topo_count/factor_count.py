@@ -12,4 +12,4 @@ def get_factor_count(num:int):
 
 
 if __name__ == "__main__":
-    print(get_factor_count(0))
+    print(get_factor_count(840))
