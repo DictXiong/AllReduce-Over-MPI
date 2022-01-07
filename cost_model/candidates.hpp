@@ -106,6 +106,10 @@ public:
     {
         if (tree_now.empty() && candidates.empty())
         {
+            /**
+             * @brief 剪枝. 
+             * 公式推导可以得出下面这个限制. 
+             */
             for (size_t n = 0; n * (n + 1) < num_nodes; ++n)
             {
                 tree_now.push_back(n);
