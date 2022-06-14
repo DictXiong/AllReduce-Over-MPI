@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <glog/logging.h>
 
 template<class DataType>
 __global__
@@ -204,7 +205,7 @@ void reduce_sum_20(const DataType *src0, const DataType *src1, const DataType *s
 template<class DataType>
 __host__ void reduce_sum_gpu(const DataType **src, DataType *dst, const int num_blocks, const size_t num_elements, int blocksPerGrid, int threadsPerBlock)
 {
-    if (num_blocks <= 1) return;
+    if (num_blocks == 0) return;
     switch (num_blocks)
     {
 case 1:
@@ -306,6 +307,10 @@ case 20:
 {
     reduce_sum_20<DataType><<<blocksPerGrid, threadsPerBlock>>>(src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7], src[8], src[9], src[10], src[11], src[12], src[13], src[14], src[15], src[16], src[17], src[18], src[19], dst, num_elements);
     break;
+}
+default:
+{
+    LOG(FATAL) << "Unknown num_blocks: " << num_blocks;
 }
     }
 }

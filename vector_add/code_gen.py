@@ -20,7 +20,7 @@ def gen_reduce_sum_gpu():
     print("""template<class DataType>
 __host__ void reduce_sum_gpu(const DataType **src, DataType *dst, const int num_blocks, const size_t num_elements, int blocksPerGrid, int threadsPerBlock)
 {
-    if (num_blocks <= 1) return;
+    if (num_blocks < 1) return;
     switch (num_blocks)
     {""")
     for i in range(1,21):
@@ -32,7 +32,12 @@ __host__ void reduce_sum_gpu(const DataType **src, DataType *dst, const int num_
         print("dst, num_elements);")
         print("        break;")
         print("    }")
-    print("    }\n}")
+    print("""default:
+{
+    LOG(FATAL) << "Unknown num_blocks: " << num_blocks;
+}
+    }
+}""")
 
 
 

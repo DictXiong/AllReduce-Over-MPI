@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <glog/logging.h>
 
 template<class DataType> 
 void reduce_sum(const DataType **src, DataType *dst, const int &num_blocks, const size_t &num_elements)
@@ -7,7 +8,7 @@ void reduce_sum(const DataType **src, DataType *dst, const int &num_blocks, cons
     //std::cout << "reduce_sum called, ele size = " << sizeof(**src) << ", num_blocks = " << num_blocks << ", num_ele = " << num_elements <<  std::endl;
     //std::cout << "AND: " << src[0][0] << " " << src[1][0] << " " << dst[0] << std::endl;
 #endif
-    if (num_blocks <= 1) return;
+    if (num_blocks == 0) return;
 #define PARALLEL_THREAD 14
     const DataType *src0 = src[0];
     const DataType *src1 = src[1];
@@ -216,8 +217,7 @@ void reduce_sum(const DataType **src, DataType *dst, const int &num_blocks, cons
         break;
     }
     default:
-        std::cerr << "Unknown num_blocks: " << num_blocks << std::endl;
-        break;
+        LOG(FATAL) << "Unknown num_blocks: " << num_blocks;
     }
 }
 
