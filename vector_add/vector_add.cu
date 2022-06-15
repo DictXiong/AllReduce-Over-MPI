@@ -179,14 +179,22 @@ int main(int argc, char **argv)
     google::InitGoogleLogging(argv[0]);
     google::InstallFailureSignalHandler();
 
+    const uint num_elements = 150e6, round = 10, max_width = 16;
+    std::vector<uint> results_cpu(max_width + 1), results_gpu(max_width + 1);
 
-    // Print the vector length to be used, and compute its size
-    std::vector<uint> results_cpu, results_gpu;
-    for (uint i = 1; i != 9; ++i)
+    for (uint j = 0; j != round; j++)
     {
-        auto ret = benchmark(i, 400e6);
-        results_gpu.push_back(ret.first);
-        results_cpu.push_back(ret.second);
+        for (uint i = 1; i <= max_width; ++i)
+        {
+            auto ret = benchmark(i, num_elements);
+            results_gpu[i] += ret.first;
+            results_cpu[i] += ret.second;
+        }
+    }
+    for (uint i = 1; i <= max_width; ++i)
+    {
+        results_cpu[i] /= round;
+        results_gpu[i] /= round;
     }
     print_vector(results_gpu);
     print_vector(results_cpu);
