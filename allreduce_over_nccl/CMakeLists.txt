@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.0.2)
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 project(aoncclproj LANGUAGES CXX CUDA)
 
-set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -Wreorder -fPIC -fopenmp -mavx2")
+set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -Wreorder -fPIC -fopenmp -mavx2 -fopt-info")
+set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}")
 
 find_package(MPI REQUIRED)
 find_package(CUDA REQUIRED)
@@ -31,5 +33,5 @@ add_definitions( -DGIT_REPO_HASH=\"${GIT_REPO_HASH}\")
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
 message("${MPI_INCLUDE_PATH}")
 
-add_executable(allreduce_over_nccl test.cpp)
+cuda_add_executable(allreduce_over_nccl benchmark.cu)
 target_link_libraries(allreduce_over_nccl ${MPI_CXX_LIBRARIES} ${CUDA_LIBRARIES} glog pthread nccl)
