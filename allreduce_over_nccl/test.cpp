@@ -1,4 +1,6 @@
+#include<iostream>
 #include <stdio.h>
+#include<cstring>
 #include "cuda_runtime.h"
 #include "nccl.h"
 #include "mpi.h"
@@ -105,14 +107,24 @@ int main(int argc, char *argv[])
     CUDACHECK(cudaSetDevice(localRank));
     CUDACHECK(cudaMalloc(&sendbuff, size * sizeof(float)));
     CUDACHECK(cudaMalloc(&recvbuff, size * sizeof(float)));
+    CUDACHECK(cudaMemset(sendbuff, 1, size * sizeof(float)));
+    CUDACHECK(cudaMemset(recvbuff, 0, size * sizeof(float)));
     CUDACHECK(cudaStreamCreate(&s));
 
     // initializing NCCL
     NCCLCHECK(ncclCommInitRank(&comm, nRanks, id, myRank));
 
     // communicating using NCCL
-    NCCLCHECK(ncclAllReduce((const void *)sendbuff, (void *)recvbuff, size, ncclFloat, ncclSum,
-                            comm, s));
+    //NCCLCHECK(ncclAllReduce((const void *)sendbuff, (void *)recvbuff, size, ncclFloat, ncclSum, comm, s));
+    float *recvbuff_host = new float;
+    CUDACHECK(cudaMemcpy(recvbuff_host, recvbuff, sizeof(float), cudaMemcpyDeviceToHost));
+    std::cout << "before comm: " << *recvbuff_host << std::endl;
+    ncclGroupStart();
+    NCCLCHECK(ncclSend(sendbuff, size, ncclFloat, 0, comm, s));
+    NCCLCHECK(ncclRecv(recvbuff, size, ncclFloat, 0, comm, s));
+    ncclGroupEnd();
+    CUDACHECK(cudaMemcpy(recvbuff_host, recvbuff, sizeof(float), cudaMemcpyDeviceToHost));
+    std::cout << "after comm: " << *recvbuff_host << std::endl;
 
     // completing NCCL operation by synchronizing on the CUDA stream
     CUDACHECK(cudaStreamSynchronize(s));
